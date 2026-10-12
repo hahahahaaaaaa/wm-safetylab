@@ -1,0 +1,28 @@
+{
+  "recipes": {
+    "native-modelscope": {
+      "name": "ModelScope 视频生成",
+      "task": "native",
+      "direction": "video",
+      "description": "调用已配置的原生 Python 环境与模型资源。",
+      "entrypoint": "wms.engines.modelscope.native:modelscope_generate",
+      "runtime": {
+        "native_key": "modelscope",
+        "config_file": "runtime.json"
+      },
+      "inputs": {
+        "prompt": "A red cube on a wooden table.",
+        "generation": {
+          "height": 256,
+          "width": 256,
+          "num_frames": 16,
+          "num_inference_steps": 25,
+          "guidance_scale": 9.0,
+          "fps": 8
+        }
+      },
+      "metrics": [],
+      "steps": 8
+    }
+  }
+}

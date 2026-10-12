@@ -1,0 +1,8 @@
+{
+  "recipe": "state-wm-maniskill",
+  "name": "WM—机械臂后果对照 · 录像与预测可视化",
+  "inputs": {
+    "record_video": true,
+    "visualization_seed": 0
+  }
+}

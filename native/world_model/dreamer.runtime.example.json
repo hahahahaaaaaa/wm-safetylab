@@ -1,0 +1,14 @@
+{
+  "python": "/path/to/dreamer-environment/bin/python",
+  "adapter": "dreamer",
+  "config": "../dreamer/runtime.json",
+  "request": "dreamer.request.json",
+  "env": {
+    "JAX_PLATFORMS": "cpu",
+    "CUDA_VISIBLE_DEVICES": "",
+    "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+    "OMP_NUM_THREADS": "4",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "timeout_s": 600
+}

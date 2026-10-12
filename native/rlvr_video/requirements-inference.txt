@@ -1,0 +1,11 @@
+numpy==1.26.4
+transformers==4.44.2
+huggingface-hub==0.25.2
+diffusers==0.27.0
+accelerate==0.34.2
+einops==0.8.0
+imageio==2.36.0
+imageio-ffmpeg==0.5.1
+safetensors==0.4.5
+tfrecord==1.14.5
+pytest==8.3.3

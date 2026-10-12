@@ -1,0 +1,48 @@
+{
+  "recipes": {
+    "native-maniskill": {
+      "name": "ManiSkill 官方运动规划示例",
+      "task": "native",
+      "direction": "control",
+      "description": "调用已配置的原生 Python 环境与模型资源。",
+      "entrypoint": "wms.engines.maniskill.native:maniskill_rollout",
+      "runtime": {
+        "native_key": "maniskill",
+        "config_file": "runtime.linux.json"
+      },
+      "inputs": {
+        "task": "PushCube-v1",
+        "robot": "panda",
+        "controller": "pd_joint_pos",
+        "physics_backend": "physx_cpu",
+        "executor": "official_motion_planner",
+        "max_steps": 500,
+        "render_mode": "rgb_array"
+      },
+      "metrics": [],
+      "steps": 500
+    },
+    "maniskill-hold": {
+      "name": "ManiSkill 环境接口：保持关节位置",
+      "task": "rollout",
+      "direction": "control",
+      "description": "机械臂环境调用示例；没有训练或世界模型。",
+      "runtime": {
+        "native_key": "maniskill",
+        "config_file": "runtime.linux.json"
+      },
+      "steps": 8,
+      "environment": {
+        "entrypoint": "wms.scenarios.maniskill.adapter:PandaPushCubeEnv",
+        "config": {
+          "runtime_config": "$runtime.config_file",
+          "env": "$runtime.env"
+        }
+      },
+      "model": {
+        "entrypoint": "wms.scenarios.maniskill.adapter:HoldArmOpenGripperPolicy",
+        "config": {}
+      }
+    }
+  }
+}

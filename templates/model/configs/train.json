@@ -1,0 +1,5 @@
+{
+  "recipe": "onboarding-model-train",
+  "name": "教学模型：训练增益 0.8",
+  "seed": 0
+}

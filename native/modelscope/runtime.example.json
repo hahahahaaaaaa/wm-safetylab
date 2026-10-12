@@ -1,0 +1,11 @@
+{
+  "python": "/path/to/modelscope-environment/bin/python",
+  "checkpoint_dir": "/path/to/project/weights/modelscope-t2v-fp16",
+  "weights": {
+    "repository": "ali-vilab/text-to-video-ms-1.7b",
+    "revision": "8227dddca75a8561bf858d604cc5dae52b954d01"
+  },
+  "cuda_visible_devices": "0",
+  "env": {"PYTHONDONTWRITEBYTECODE": "1"},
+  "timeout_s": 1800
+}

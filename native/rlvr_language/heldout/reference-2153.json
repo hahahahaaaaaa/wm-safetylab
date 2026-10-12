@@ -1,0 +1,11 @@
+{
+  "ground_truth": "{\"game_state\": [{\"name\": \"nest (ID: 1)\", \"uuid\": 1, \"type\": \"World\", \"properties\": {\"isContainer\": true, \"isMoveable\": true, \"isOpenable\": false, \"isOpen\": true, \"containerPrefix\": \"in\"}, \"contains\": [\"agent (ID: 0)\", \"baby (ID: 2)\"]}, {\"name\": \"agent (ID: 0)\", \"uuid\": 0, \"type\": \"Agent\", \"properties\": {\"isContainer\": true, \"isMoveable\": true, \"isOpenable\": false, \"isOpen\": true, \"containerPrefix\": \"in\", \"stage\": \"adult bird\", \"warm\": 3, \"food\": 3, \"hatch\": 0, \"grow\": 0}, \"contains\": []}, {\"name\": \"baby (ID: 2)\", \"uuid\": 2, \"type\": \"Bird\", \"properties\": {\"isContainer\": true, \"isMoveable\": true, \"isOpenable\": false, \"isOpen\": true, \"containerPrefix\": \"in\", \"stage\": \"egg\", \"warm\": 1, \"food\": 3, \"hatch\": 2, \"grow\": 0}, \"contains\": []}, {\"score\": 0, \"gameOver\": false, \"gameWon\": false}]}",
+  "extra_info": {
+    "data_action": "look",
+    "data_state": "{\"game_state\": [{\"name\": \"nest (ID: 1)\", \"uuid\": 1, \"type\": \"World\", \"properties\": {\"isContainer\": true, \"isMoveable\": true, \"isOpenable\": false, \"isOpen\": true, \"containerPrefix\": \"in\"}, \"contains\": [\"agent (ID: 0)\", \"baby (ID: 2)\"]}, {\"name\": \"agent (ID: 0)\", \"uuid\": 0, \"type\": \"Agent\", \"properties\": {\"isContainer\": true, \"isMoveable\": true, \"isOpenable\": false, \"isOpen\": true, \"containerPrefix\": \"in\", \"stage\": \"adult bird\", \"warm\": 3, \"food\": 3, \"hatch\": 0, \"grow\": 0}, \"contains\": []}, {\"name\": \"baby (ID: 2)\", \"uuid\": 2, \"type\": \"Bird\", \"properties\": {\"isContainer\": true, \"isMoveable\": true, \"isOpenable\": false, \"isOpen\": true, \"containerPrefix\": \"in\", \"stage\": \"egg\", \"warm\": 2, \"food\": 3, \"hatch\": 1, \"grow\": 0}, \"contains\": []}, {\"score\": 0, \"gameOver\": false, \"gameWon\": false}]}",
+    "index": 2153,
+    "split": "test"
+  },
+  "dataset_row_index": 2153,
+  "role": "evaluator_only_not_passed_to_predict"
+}

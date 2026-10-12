@@ -1,0 +1,5 @@
+{
+  "python": "/replace-with-your-project-root/envs/wms-onboarding/bin/python",
+  "env": {"SDL_VIDEODRIVER": "dummy", "SDL_AUDIODRIVER": "dummy"},
+  "timeout_s": 120
+}

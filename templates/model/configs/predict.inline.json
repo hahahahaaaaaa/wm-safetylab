@@ -1,0 +1,28 @@
+{
+  "name": "教学模型：不预注册直接提交",
+  "task": "predict",
+  "direction": "control",
+  "runtime": {
+    "python": "auto",
+    "python_paths": ["templates/model"]
+  },
+  "model": {
+    "entrypoint": "wms_model_template.adapter:TeachingStateModel",
+    "config": {"gain": 1.0}
+  },
+  "inputs": {
+    "observation": [0.0],
+    "actions": [[0.1], [0.2], [-0.1]],
+    "reference": [[0.1], [0.3], [0.2]]
+  },
+  "params": {"save_predictions": true},
+  "metrics": [{
+    "entrypoint": "wms_model_template.metrics:prediction_metrics",
+    "name": "teaching_position_error",
+    "unit": "m",
+    "version": "1"
+  }],
+  "seed": 0,
+  "timeout_s": 60,
+  "tags": ["teaching", "not_neural_wm", "S3", "evaluation"]
+}

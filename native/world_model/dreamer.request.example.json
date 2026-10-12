@@ -1,0 +1,13 @@
+{
+  "schema_version": "wms.predict/1.0",
+  "request_id": "format-example-not-benchmark-data",
+  "model_id": "dreamerv3-cartpole-predict",
+  "seed": 0,
+  "horizon": {"steps": 3, "unit": "environment_step"},
+  "inputs": {
+    "context_observations": [[0.0, 0.0, 0.01, 0.0]],
+    "context_actions": [],
+    "actions": [0, 1, 0]
+  },
+  "parameters": {}
+}

@@ -1,0 +1,8 @@
+{
+  "python": "auto",
+  "checkpoint": "REPLACE_WITH_ACTUAL_CHECKPOINT_PATH",
+  "upstream_revision": "REPLACE_WITH_PINNED_COMMIT_OR_RELEASE",
+  "device": "cpu",
+  "env": {},
+  "timeout_s": 600
+}

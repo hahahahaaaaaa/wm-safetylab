@@ -1,0 +1,1 @@
+"""Reserved extension namespace; no executable capability is registered yet."""

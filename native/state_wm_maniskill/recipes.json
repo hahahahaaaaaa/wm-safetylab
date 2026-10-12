@@ -1,0 +1,19 @@
+{
+  "recipes": {
+    "state-wm-maniskill": {
+      "name": "Small state WM + ManiSkill PushCube",
+      "description": "Real simulation collection, episode-held-out residual state WM training and separate consequence evaluation; engineering validation only.",
+      "task": "native",
+      "direction": "control",
+      "entrypoint": "wms.engines.state_wm_maniskill.native:run",
+      "runtime": {"native_key": "maniskill", "config_file": "../maniskill/runtime.json", "timeout_s": 3600},
+      "params": {"runtime_config": "$runtime.config_file", "episodes": 36, "max_episode_steps": 160, "action_noise_std_rad": 0.003,
+        "data_seed_start": 0, "split_seed": 20261010, "training_seeds": [0, 1, 2],
+        "epochs": 400, "hidden_width": 128, "batch_size": 256, "horizon": 5, "cpu_threads": 4,
+        "record_video": false, "visualization_seed": 0},
+      "metrics": [{"name": "state_wm_consequences", "entrypoint": "wms.engines.state_wm_maniskill.metrics:measure",
+        "params": {}, "version": "state-wm-maniskill/1", "unit": "cube/tcp:mm; arm:rad"}],
+      "tags": ["engineering", "maniskill", "learned-state-wm", "S1", "S2", "S3", "S6"]
+    }
+  }
+}

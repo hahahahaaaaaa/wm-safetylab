@@ -1,0 +1,34 @@
+{
+  "recipes": {
+    "native-wan": {
+      "name": "Wan2.1 视频生成",
+      "task": "native",
+      "direction": "video",
+      "description": "调用已配置的原生 Python 环境与模型资源。",
+      "entrypoint": "wms.engines.wan.native:wan_generate",
+      "runtime": {
+        "native_key": "wan",
+        "config_file": "runtime.json"
+      },
+      "inputs": {
+        "prompt": "A red cube on a wooden table.",
+        "generation": {
+          "size": [
+            832,
+            480
+          ],
+          "frame_num": 81,
+          "sample_solver": "unipc",
+          "sampling_steps": 50,
+          "shift": 8.0,
+          "guide_scale": 6.0,
+          "offload_model": true,
+          "t5_cpu": true,
+          "prompt_extend": false
+        }
+      },
+      "metrics": [],
+      "steps": 8
+    }
+  }
+}

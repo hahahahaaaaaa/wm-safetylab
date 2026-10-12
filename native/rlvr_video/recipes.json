@@ -1,0 +1,20 @@
+{
+  "recipes": {
+    "predict-rlvr_video": {
+      "name": "rlvr_video 离线预测",
+      "task": "native",
+      "direction": "video",
+      "description": "使用已有世界模型预测适配器；不要求仿真环境。",
+      "entrypoint": "wms.engines.rlvr_video.native:predict",
+      "runtime": {
+        "native_key": "predict-rlvr_video",
+        "config_file": "runtime.json"
+      },
+      "params": {
+        "adapter_entrypoint": "wms.engines.rlvr_video.adapter:RLVRVideoAdapter"
+      },
+      "inputs": {},
+      "metrics": []
+    }
+  }
+}

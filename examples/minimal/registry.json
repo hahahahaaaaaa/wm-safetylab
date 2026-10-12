@@ -1,0 +1,143 @@
+{
+  "python_paths": [
+    "."
+  ],
+  "models": {
+    "linear": {
+      "entrypoint": "wms_demo:LinearModel",
+      "config": {}
+    }
+  },
+  "environments": {
+    "point": {
+      "entrypoint": "wms_demo:PointEnv",
+      "config": {}
+    }
+  },
+  "algorithms": {
+    "shooting": {
+      "entrypoint": "wms.core.planners:RandomShooting",
+      "config": {
+        "horizon": 3,
+        "candidates": 8
+      }
+    },
+    "cem": {
+      "entrypoint": "wms.core.planners:CrossEntropy",
+      "config": {
+        "horizon": 3,
+        "population": 8,
+        "elites": 2,
+        "iterations": 2
+      }
+    }
+  },
+  "recipes": {
+    "demo-rollout": {
+      "name": "CPU 接口示例：交互运行",
+      "description": "合成一维状态与固定策略，用于理解调用流程，不是安全 baseline。",
+      "task": "rollout",
+      "direction": "control",
+      "model": "linear",
+      "environment": "point",
+      "inputs": {
+        "goal": 1
+      },
+      "steps": 8,
+      "metrics": [
+        "wms_demo:trajectory_metrics"
+      ],
+      "tags": [
+        "synthetic",
+        "S1",
+        "S5",
+        "S6"
+      ]
+    },
+    "demo-predict": {
+      "name": "CPU 接口示例：离线预测",
+      "description": "合成线性预测，无需仿真环境。",
+      "task": "predict",
+      "direction": "control",
+      "model": "linear",
+      "inputs": {
+        "observation": [
+          0
+        ],
+        "actions": [
+          [
+            0.1
+          ],
+          [
+            0.2
+          ]
+        ]
+      },
+      "metrics": [],
+      "tags": [
+        "synthetic",
+        "S3"
+      ]
+    },
+    "demo-generate": {
+      "name": "CPU 接口示例：生成文件",
+      "description": "只输出文本演示文件接口，不生成视频。",
+      "task": "generate",
+      "direction": "video",
+      "model": "linear",
+      "inputs": {
+        "prompt": "WM SafetyLab 文件输出接口演示"
+      },
+      "metrics": [],
+      "tags": [
+        "synthetic"
+      ]
+    },
+    "demo-plan": {
+      "name": "CPU 接口示例：预测与规划",
+      "description": "在线采样、预测和代价计算；合成动力学。",
+      "task": "plan",
+      "direction": "control",
+      "model": "linear",
+      "environment": "point",
+      "algorithm": "shooting",
+      "inputs": {
+        "goal": 1
+      },
+      "params": {
+        "cost": "wms_demo:distance_cost",
+        "action_range": [
+          [
+            -0.2,
+            0.2
+          ]
+        ]
+      },
+      "steps": 5,
+      "metrics": [
+        "wms_demo:trajectory_metrics"
+      ],
+      "tags": [
+        "synthetic",
+        "S3",
+        "S4",
+        "S5"
+      ]
+    },
+    "demo-native": {
+      "name": "CPU 接口示例：原生函数",
+      "description": "演示包装原有论文脚本的函数入口。",
+      "task": "native",
+      "direction": "control",
+      "entrypoint": "wms_demo:native_example",
+      "inputs": {
+        "message": "hello"
+      },
+      "steps": 1,
+      "metrics": [],
+      "tags": [
+        "synthetic"
+      ]
+    }
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "python": "K:/world-model/envs/wms-onboarding/Scripts/python.exe",
+  "env": {"SDL_VIDEODRIVER": "dummy", "SDL_AUDIODRIVER": "dummy"},
+  "timeout_s": 120
+}

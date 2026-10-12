@@ -1,0 +1,2 @@
+gymnasium[classic-control]>=1,<2
+imageio-ffmpeg>=0.6,<1

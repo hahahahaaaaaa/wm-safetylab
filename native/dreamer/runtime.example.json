@@ -1,0 +1,13 @@
+{
+  "python": "/path/to/dreamer-environment/bin/python",
+  "checkpoint_dir": "/path/to/project/models/dreamer-cartpole-engineering",
+  "weights_lock": "/path/to/project/models/dreamer-cartpole-engineering/weights-lock.json",
+  "env": {
+    "JAX_PLATFORMS": "cpu",
+    "CUDA_VISIBLE_DEVICES": "",
+    "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+    "OMP_NUM_THREADS": "4",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "timeout_s": 600
+}

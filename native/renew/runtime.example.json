@@ -1,0 +1,12 @@
+{
+  "python": "/path/to/renew-environment/bin/python",
+  "source_dir": "/path/to/project/repos/RENEW",
+  "source_commit": "8f6e1ebf66a0200cc2015226cdd7d70900fc0cb7",
+  "env": {
+    "JAX_PLATFORMS": "cpu",
+    "CUDA_VISIBLE_DEVICES": "",
+    "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "timeout_s": 1800
+}

@@ -1,0 +1,7 @@
+{
+  "python": "/path/to/maniskill-environment/bin/python",
+  "asset_dir": "/path/to/project/assets/maniskill",
+  "gpu_device": "0",
+  "env": {"PYTHONDONTWRITEBYTECODE": "1"},
+  "timeout_s": 3600
+}

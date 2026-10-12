@@ -1,0 +1,37 @@
+{
+  "recipes": {
+    "native-renew": {
+      "name": "RENEW 原生实验",
+      "task": "native",
+      "direction": "control",
+      "description": "调用已配置的原生 Python 环境与模型资源。",
+      "entrypoint": "wms.engines.renew.native:renew_pilot",
+      "runtime": {
+        "native_key": "renew",
+        "config_file": "runtime.json"
+      },
+      "inputs": {
+        "id": "RENEW-FEEDBACK-PILOT",
+        "board_size": 2,
+        "warmup_steps": 200,
+        "update_steps": 40,
+        "batch_size": 32,
+        "risk_threshold": 0.15,
+        "num_candidates": 3,
+        "num_tiles": 5,
+        "methods": [
+          "frozen",
+          "bt",
+          "renew_style",
+          "mle",
+          "dpo",
+          "full_group"
+        ],
+        "max_steps": 400,
+        "scope": "controlled_adaptation"
+      },
+      "metrics": [],
+      "steps": 8
+    }
+  }
+}

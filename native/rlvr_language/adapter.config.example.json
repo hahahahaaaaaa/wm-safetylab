@@ -1,0 +1,5 @@
+{
+  "model_dir": "/path/to/project/models/rlvr-language-task-specific-153dd625",
+  "source_dir": "/path/to/project/repos/RLVR-World-lang-e1b8b6f-linux",
+  "resource_manifest": "/path/to/project/native-resources/rlvr-language-resources.json"
+}

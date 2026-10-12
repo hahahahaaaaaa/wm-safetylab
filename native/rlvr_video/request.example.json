@@ -1,0 +1,9 @@
+{
+  "schema_version": "wms.predict/1.0",
+  "request_id": "rt1-single-step-real-smoke-hashed",
+  "model_id": "rlvr-video-rt1-single-step-rlvr",
+  "seed": 0,
+  "horizon": {"steps": 1, "unit": "video_frame"},
+  "inputs": {"context_npz": "/path/to/world-model/datasets/rlvr-video-rt1-smoke/context.npz", "context_sha256": "2e98b72820776fcc40d9dcc5e82b030d7693c2cd86be86ffc539e54117dfdf96"},
+  "parameters": {}
+}

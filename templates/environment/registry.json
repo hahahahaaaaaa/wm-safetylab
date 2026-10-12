@@ -1,0 +1,35 @@
+{
+  "python_paths": ["."],
+  "models": {
+    "template-constant-policy": {
+      "entrypoint": "lab_env.policy:ConstantPolicy",
+      "config": {"torque_Nm": 0.5}
+    }
+  },
+  "environments": {
+    "template-pendulum-env": {
+      "entrypoint": "lab_env.adapter:PendulumAdapter",
+      "config": {"gravity": 10.0, "max_episode_steps": 200}
+    }
+  },
+  "recipes": {
+    "template-pendulum-rollout": {
+      "name": "接入教程：Gymnasium Pendulum 交互",
+      "description": "真实 CPU 单摆仿真，恒定力矩教学策略；不代表 WM 或安全防护效果。",
+      "task": "rollout", "direction": "control",
+      "model": "template-constant-policy", "environment": "template-pendulum-env",
+      "seed": 42, "steps": 40, "timeout_s": 120,
+      "metrics": [{"entrypoint": "lab_env.metrics:trajectory_metrics", "version": "1.0", "params": {}}],
+      "tags": ["onboarding", "real-simulation", "S1", "S5", "S6"]
+    },
+    "template-pendulum-video": {
+      "name": "接入教程：Gymnasium Pendulum 录像",
+      "description": "原生包装器额外登记 simulation.mp4；不改平台核心。",
+      "task": "native", "direction": "control", "entrypoint": "lab_env.native:record_episode",
+      "model": "template-constant-policy", "environment": "template-pendulum-env",
+      "seed": 42, "steps": 40, "timeout_s": 120,
+      "metrics": [{"entrypoint": "lab_env.metrics:trajectory_metrics", "version": "1.0", "params": {}}],
+      "tags": ["onboarding", "real-simulation", "video", "S1", "S5", "S6"]
+    }
+  }
+}

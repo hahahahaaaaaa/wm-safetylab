@@ -1,0 +1,36 @@
+{
+  "recipes": {
+    "native-openvla": {
+      "name": "OpenVLA 动作推理",
+      "task": "native",
+      "direction": "vla",
+      "description": "调用已配置的原生 Python 环境与模型资源。",
+      "entrypoint": "wms.engines.openvla.native:openvla_infer",
+      "runtime": {
+        "native_key": "openvla",
+        "config_file": "runtime.json"
+      },
+      "inputs": {},
+      "metrics": [],
+      "steps": 8,
+      "params": {
+        "input_defaults": {
+          "unnorm_key": "bridge_orig",
+          "action_semantics": {
+            "representation": "dataset_action",
+            "coordinate_frame": "checkpoint_dataset",
+            "units": [
+              "dataset_defined",
+              "dataset_defined",
+              "dataset_defined",
+              "dataset_defined",
+              "dataset_defined",
+              "dataset_defined",
+              "dataset_defined"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

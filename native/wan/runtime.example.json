@@ -1,0 +1,9 @@
+{
+  "python": "/srv/world-model/envs/wan/bin/python",
+  "source_dir": "/srv/world-model/repos/Wan2.1-9737cba9c1c3c4d04b33fcad41c111989865d315",
+  "source_lock": "/srv/world-model/deployments/wm-safetylab/native/wan/source-lock.json",
+  "checkpoint_dir": "/srv/world-model/weights/Wan2.1-T2V-1.3B",
+  "weights_lock": "/srv/world-model/deployments/wm-safetylab/native/wan/weights-lock.json",
+  "dependency_lock": "/srv/world-model/deployments/wm-safetylab/native/wan/requirements-native.lock",
+  "cuda_visible_devices": "0"
+}

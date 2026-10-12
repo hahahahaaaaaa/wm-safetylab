@@ -1,0 +1,13 @@
+{
+  "python": "/path/to/rlvr-video-environment/bin/python",
+  "adapter": "rlvr_video",
+  "config": "adapter.config.json",
+  "request": "request.example.json",
+  "env": {
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "CUDA_VISIBLE_DEVICES": "0"
+  },
+  "timeout_s": 900
+}

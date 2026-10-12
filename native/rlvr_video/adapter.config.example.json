@@ -1,0 +1,8 @@
+{
+  "source_root": "/path/to/project/repos/RLVR-World-video",
+  "model_path": "/path/to/project/weights/rt1-world-model-single-step-rlvr",
+  "tokenizer_path": "/path/to/project/weights/rt1-frame-tokenizer",
+  "dataset_root": "/path/to/project/datasets/rlvr-video-smoke",
+  "device": "cuda:0",
+  "cpu_threads": 4
+}

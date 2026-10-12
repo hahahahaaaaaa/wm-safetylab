@@ -1,0 +1,38 @@
+{
+  "recipes": {
+    "native-dreamer": {
+      "name": "Dreamer 原生推理",
+      "task": "native",
+      "direction": "control",
+      "description": "调用已配置的原生 Python 环境与模型资源。",
+      "entrypoint": "wms.engines.dreamer.native:dreamer_infer",
+      "runtime": {
+        "native_key": "dreamer",
+        "config_file": "runtime.linux.json"
+      },
+      "inputs": {
+        "id": "DREAMER-OFFLINE-CARTPOLE",
+        "sequence_steps": 32,
+        "checkpoint_class": "engineering_checkpoint"
+      },
+      "metrics": [],
+      "steps": 8
+    },
+    "predict-dreamer": {
+      "name": "dreamer 离线预测",
+      "task": "native",
+      "direction": "control",
+      "description": "使用已有世界模型预测适配器；不要求仿真环境。",
+      "entrypoint": "wms.engines.dreamer.native:predict",
+      "runtime": {
+        "native_key": "predict-dreamer",
+        "config_file": "../world_model/dreamer.runtime.json"
+      },
+      "params": {
+        "adapter_entrypoint": "wms.engines.dreamer.prediction_adapter:DreamerPredictionAdapter"
+      },
+      "inputs": {},
+      "metrics": []
+    }
+  }
+}

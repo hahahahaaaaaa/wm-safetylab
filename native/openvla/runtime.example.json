@@ -1,0 +1,8 @@
+{
+  "python": "/path/to/world-model/deployments/wm-safetylab/.venv-openvla/bin/python",
+  "checkpoint_dir": "/path/to/world-model/weights/openvla-7b",
+  "weights_lock": "/path/to/world-model/deployments/wm-safetylab/native/openvla/weights-lock.json",
+  "environment_lock": "/path/to/world-model/deployments/wm-safetylab/native/openvla/environment-lock.json",
+  "input_lock": "/path/to/world-model/deployments/wm-safetylab/native/openvla/input-lock.json",
+  "cuda_visible_devices": "0"
+}

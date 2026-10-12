@@ -1,0 +1,68 @@
+{
+  "python_paths": ["."],
+  "models": {
+    "onboarding-state-model": {
+      "entrypoint": "wms_model_template.adapter:TeachingStateModel",
+      "config": {"gain": 1.0}
+    },
+    "onboarding-upstream-model": {
+      "entrypoint": "wms_model_template.upstream:UpstreamWorldModel",
+      "config": {"runtime_config": "$runtime.config_file"}
+    }
+  },
+  "runtimes": {
+    "onboarding-upstream-runtime": {"config_file": "runtime.local.json"}
+  },
+  "recipes": {
+    "onboarding-model-predict": {
+      "name": "接入教学：一维状态预测",
+      "description": "CPU 解析转换教学样例，非神经世界模型或安全 baseline。",
+      "task": "predict",
+      "direction": "control",
+      "model": "onboarding-state-model",
+      "inputs": {
+        "observation": [0.0],
+        "actions": [[0.1], [0.2], [-0.1]],
+        "reference": [[0.1], [0.3], [0.2]]
+      },
+      "params": {"save_predictions": true},
+      "metrics": [{
+        "entrypoint": "wms_model_template.metrics:prediction_metrics",
+        "name": "teaching_position_error",
+        "unit": "m",
+        "version": "1"
+      }],
+      "timeout_s": 60,
+      "tags": ["teaching", "not_neural_wm", "S3", "evaluation"]
+    },
+    "onboarding-model-train": {
+      "name": "接入教学：原生训练与 checkpoint",
+      "description": "64 条合成标量转移的最小二乘拟合，演示训练调用和来源记录。",
+      "task": "native",
+      "direction": "control",
+      "entrypoint": "wms_model_template.train:run",
+      "seed": 0,
+      "inputs": {},
+      "params": {
+        "train_entrypoint": "wms_model_template.train:fit_teaching_gain",
+        "synthetic_gain": 0.8,
+        "samples": 64
+      },
+      "timeout_s": 60,
+      "metrics": [],
+      "tags": ["teaching", "not_neural_wm", "S6"]
+    },
+    "onboarding-model-upstream": {
+      "name": "待实现：真实世界模型",
+      "description": "骨架，需填写机器配置并实现官方推理调用；不能用于声称模型接入成功。",
+      "task": "predict",
+      "direction": "control",
+      "model": "onboarding-upstream-model",
+      "runtime": "onboarding-upstream-runtime",
+      "inputs": {},
+      "params": {},
+      "metrics": [],
+      "tags": ["scaffold", "not_validated", "S2", "S3"]
+    }
+  }
+}
