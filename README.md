@@ -2,6 +2,8 @@
 
 面向世界模型研究的 Python 核心、CLI 与 Web 实验工作台。当前版本 **0.3.0**。
 
+日常开发、修改和优化使用 [wm-safetylab-update](https://github.com/hahahahaaaaaa/wm-safetylab-update)。[原仓库](https://github.com/hahahahaaaaaa/wm-safetylab)保留此前发布版本，日常更新默认推送到新仓库。
+
 ```text
 实验配方 → 独立 Python 工作进程 → 原始输出 / checkpoint / 轨迹 / 视频
                                   ↓
@@ -30,7 +32,7 @@
 Linux：
 
 ```bash
-git clone https://github.com/hahahahaaaaaa/wm-safetylab.git
+git clone https://github.com/hahahahaaaaaa/wm-safetylab-update.git wm-safetylab
 cd wm-safetylab
 source scripts/linux/use-linux.sh
 python3.11 -m venv .venv
@@ -42,7 +44,7 @@ python3.11 -m venv .venv
 Windows PowerShell（先进入你选定的项目存储目录）：
 
 ```powershell
-git clone https://github.com/hahahahaaaaaa/wm-safetylab.git
+git clone https://github.com/hahahahaaaaaa/wm-safetylab-update.git wm-safetylab
 Set-Location wm-safetylab
 . .\scripts\windows\use-workspace.ps1
 py -3.11 -m venv .venv

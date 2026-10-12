@@ -19,13 +19,15 @@
 
 以下使用自选存储根目录；把占位路径换成你有写权限的实际位置。已有仓库时进入原目录，跳过克隆，不覆盖已有环境、权重和实验数据。原生源码、缓存、环境、模型资源也应放在该存储根目录下。
 
+日常开发仓库为 `hahahahaaaaaa/wm-safetylab-update`。克隆时显式指定本地目录名 `wm-safetylab`，保持原生资源准备工具使用的 `deployments/wm-safetylab` 布局。已有工作目录不需要重建；当前维护者工作副本以 `origin` 指向日常仓库，以 `archive` 保留此前的 `wm-safetylab` 仓库。
+
 ### Windows PowerShell
 
 ```powershell
 $WorkRoot = Read-Host '输入项目存储根目录的绝对路径'
 $ProjectRoot = Join-Path $WorkRoot 'deployments\wm-safetylab'
 New-Item -ItemType Directory -Force -Path (Split-Path $ProjectRoot) | Out-Null
-git clone https://github.com/hahahahaaaaaa/wm-safetylab.git $ProjectRoot
+git clone https://github.com/hahahahaaaaaa/wm-safetylab-update.git $ProjectRoot
 Set-Location -LiteralPath $ProjectRoot
 
 # 每个安装或运行项目代码的新终端都先执行环境脚本。
@@ -50,7 +52,7 @@ Pop-Location
 read -r -p '输入项目存储根目录的绝对路径: ' WORK_ROOT
 PROJECT_ROOT="$WORK_ROOT/deployments/wm-safetylab"
 mkdir -p "$(dirname "$PROJECT_ROOT")"
-git clone https://github.com/hahahahaaaaaa/wm-safetylab.git "$PROJECT_ROOT"
+git clone https://github.com/hahahahaaaaaa/wm-safetylab-update.git "$PROJECT_ROOT"
 cd "$PROJECT_ROOT"
 
 export WMS_ROOT="$WORK_ROOT"
