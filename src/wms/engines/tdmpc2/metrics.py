@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 from statistics import fmean
 
-VERSION = "tdmpc2/1"
+VERSION = "tdmpc2/2"
 _FILES = {"train": "training.json", "policy_evaluate": "evaluation.json",
           "predict": "prediction_summary.json"}
 
@@ -77,7 +77,22 @@ def _policy(data):
         "action_intervention_steps": sum(interventions),
         "action_intervention_rate": sum(interventions) / sum(steps),
     }
+    # Historical results may not include geometric diagnostics. Only compare
+    # full episode cohorts; a missing measurement is never filled with zero.
+    for field in ("final_goal_distance_m", "min_goal_distance_m"):
+        if all(episode.get(field) is not None for episode in episodes):
+            values[field + "_mean"] = fmean(
+                _number(episode[field], f"episodes[{i}].{field}", nonnegative=True)
+                for i, episode in enumerate(episodes))
+    for field in ("region_success_at_end", "center_success_at_end", "center_stable_last_5"):
+        if all(episode.get(field) is not None for episode in episodes):
+            values[field + "_rate"] = fmean(
+                _flag(episode[field], f"episodes[{i}].{field}")
+                for i, episode in enumerate(episodes))
     return values, {"episode_seeds": seeds, "episodes": episodes,
+                    "env_id": data.get("env_id"),
+                    "success_protocol": data.get("protocol", {}).get("success_protocol"),
+                    "reward_version": data.get("protocol", {}).get("reward_version"),
                     "aggregation": "Equal episode weights for return, success and length; intervention rate per actual step."}
 
 

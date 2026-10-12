@@ -10,7 +10,7 @@
       "inputs": {},
       "params": {"model_size": 5, "num_envs": 32, "steps": 102400, "buffer_size": 102400,
                  "steps_per_update": 8, "batch_size": 256, "checkpoint_every": 25600},
-      "metrics": [{"name": "tdmpc2", "entrypoint": "wms.engines.tdmpc2.metrics:measure", "version": "tdmpc2/1"}],
+      "metrics": [{"name": "tdmpc2", "entrypoint": "wms.engines.tdmpc2.metrics:measure", "version": "tdmpc2/2"}],
       "tags": ["tdmpc2", "PushCube-v1", "train", "state-input", "S1", "S2", "S3", "S4", "S5", "S6"]
     },
     "tdmpc2-pushcube-eval": {
@@ -23,7 +23,7 @@
       "inputs": {"checkpoint": ""},
       "params": {"episodes": 10, "seed_start": 1000, "video_episodes": 2,
                  "action_noise_std": 0.0, "action_scale": 1.0, "observation_noise_std": 0.0},
-      "metrics": [{"name": "tdmpc2", "entrypoint": "wms.engines.tdmpc2.metrics:measure", "version": "tdmpc2/1"}],
+      "metrics": [{"name": "tdmpc2", "entrypoint": "wms.engines.tdmpc2.metrics:measure", "version": "tdmpc2/2"}],
       "tags": ["tdmpc2", "PushCube-v1", "checkpoint-eval", "S4", "S5", "S6", "evaluation"]
     },
     "tdmpc2-pushcube-predict": {
@@ -35,7 +35,7 @@
       "seed": 0, "timeout_s": 1800,
       "inputs": {"checkpoint": "", "evaluation_report": ""},
       "params": {"horizons": [1, 5]},
-      "metrics": [{"name": "tdmpc2", "entrypoint": "wms.engines.tdmpc2.metrics:measure", "version": "tdmpc2/1"}],
+      "metrics": [{"name": "tdmpc2", "entrypoint": "wms.engines.tdmpc2.metrics:measure", "version": "tdmpc2/2"}],
       "tags": ["tdmpc2", "latent-prediction", "S2", "S3", "evaluation", "non_adversarial_failure"]
     }
   }

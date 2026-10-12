@@ -1,0 +1,98 @@
+{
+  "recipes": {
+    "tdmpc2-pushcube-center-train": {
+      "name": "TD-MPC2 · 圆心精度 2cm 独立任务训练",
+      "description": "WMS-PushCubeCenter-v1：保留20cm初始推动距离，以持续距离奖励从随机权重训练；录制5段真实训练过程。",
+      "task": "native",
+      "direction": "control",
+      "entrypoint": "wms.engines.tdmpc2.native:train",
+      "runtime": {
+        "native_key": "tdmpc2",
+        "config_file": "../tdmpc2/runtime.json"
+      },
+      "seed": 0,
+      "timeout_s": 14400,
+      "inputs": {},
+      "params": {
+        "env_id": "WMS-PushCubeCenter-v1",
+        "model_size": 5,
+        "num_envs": 32,
+        "steps": 204800,
+        "buffer_size": 204800,
+        "steps_per_update": 8,
+        "batch_size": 256,
+        "checkpoint_every": 51200,
+        "record_training": true
+      },
+      "metrics": [
+        {
+          "name": "tdmpc2",
+          "entrypoint": "wms.engines.tdmpc2.metrics:measure",
+          "version": "tdmpc2/2"
+        }
+      ],
+      "tags": [
+        "tdmpc2",
+        "WMS-PushCubeCenter-v1",
+        "center2cm",
+        "train",
+        "training-video"
+      ]
+    },
+    "tdmpc2-pushcube-center-eval": {
+      "name": "TD-MPC2 · 圆心精度 2cm 评测与录像",
+      "description": "须使用本中心任务的检查点。报告最终距离、2cm任务成功、最后5步稳定性；原官方10cm区域成功另列。",
+      "task": "native",
+      "direction": "control",
+      "entrypoint": "wms.engines.tdmpc2.native:policy_evaluate",
+      "runtime": {
+        "native_key": "tdmpc2",
+        "config_file": "../tdmpc2/runtime.json"
+      },
+      "seed": 0,
+      "timeout_s": 3600,
+      "inputs": {
+        "checkpoint": ""
+      },
+      "params": {
+        "expected_env_id": "WMS-PushCubeCenter-v1",
+        "episodes": 20,
+        "seed_start": 2000,
+        "video_episodes": 20,
+        "action_noise_std": 0,
+        "action_scale": 1,
+        "observation_noise_std": 0
+      },
+      "metrics": [
+        {
+          "name": "tdmpc2",
+          "entrypoint": "wms.engines.tdmpc2.metrics:measure",
+          "version": "tdmpc2/2"
+        }
+      ],
+      "tags": [
+        "tdmpc2",
+        "WMS-PushCubeCenter-v1",
+        "center2cm",
+        "checkpoint-eval"
+      ]
+    },
+    "tdmpc2-pushcube-center-report": {
+      "name": "圆心精度 · 训练与评测完整报告",
+      "description": "读取已完成的训练与评测，汇总全部过程录像、圆心误差和失败回合；不运行模型或改写原始证据。",
+      "task": "native",
+      "direction": "control",
+      "entrypoint": "wms.engines.tdmpc2.center_report:build",
+      "timeout_s": 120,
+      "inputs": {
+        "training_run": "",
+        "test_run": ""
+      },
+      "metrics": [],
+      "tags": [
+        "center2cm",
+        "evidence-report"
+      ]
+    }
+  }
+}

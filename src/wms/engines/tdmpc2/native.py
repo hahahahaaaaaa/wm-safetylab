@@ -43,7 +43,7 @@ def _result(output, data):
         if not path.is_file() or path.name in {"result.json", "cancel.flag"}:
             continue
         suffix = path.suffix
-        kind = "checkpoint" if suffix == ".pt" else "video" if suffix == ".mp4" else "report" if suffix == ".html" else "evidence"
+        kind = "checkpoint" if suffix == ".pt" else "video" if suffix in {".mp4", ".webm"} else "report" if suffix == ".html" else "evidence"
         files.append({"path": path.relative_to(output).as_posix(), "kind": kind,
                       "media_type": mimetypes.guess_type(path.name)[0] or "application/octet-stream"})
     return {"data": data, "outputs": files}
@@ -68,6 +68,19 @@ def _goal_position_diagnostics(cube_xyz, goal_xyz, center_threshold_m=0.02):
                        "center_within_2cm": distances[-1] <= center_threshold_m}
 
 
+def _goal_success_diagnostics(cube_xyz, goal_xyz):
+    """Geometry evidence aligned to T+1 states; stability excludes reset."""
+    distances, diagnostics = _goal_position_diagnostics(cube_xyz, goal_xyz)
+    on_table = [abs(float(cube[2]) - 0.02) <= 0.005 for cube in cube_xyz]
+    center = [distance <= 0.02 and valid for distance, valid in zip(distances, on_table, strict=True)]
+    region = [distance < 0.1 and float(cube[2]) < 0.025
+              for distance, cube in zip(distances, cube_xyz, strict=True)]
+    post_action_center = center[1:]
+    diagnostics.update(region_success_at_end=region[-1], center_success_at_end=center[-1],
+                       center_stable_last_5=len(post_action_center) >= 5 and all(post_action_center[-5:]))
+    return distances, center, region, diagnostics
+
+
 def policy_evaluate(config, output_dir, context):
     runtime, params, inputs = _settings(config)
     compat.prepare(runtime)
@@ -77,6 +90,9 @@ def policy_evaluate(config, output_dir, context):
     output = Path(output_dir)
     checkpoint = _source(inputs, output)
     agent, cfg, training_metadata = compat.checkpoint_load(checkpoint)
+    expected_env_id = params.get("expected_env_id")
+    if expected_env_id and cfg.env_id != expected_env_id:
+        raise ValueError(f"Checkpoint task {cfg.env_id!r} differs from requested task {expected_env_id!r}")
     seed_start = int(params.get("seed_start", 1000))
     seeds = [int(v) for v in inputs.get("seeds", range(seed_start, seed_start + int(params.get("episodes", 10))))]
     if not seeds:
@@ -93,7 +109,7 @@ def policy_evaluate(config, output_dir, context):
         raise ValueError("Noise standard deviations must be nonnegative")
     episodes, trajectories = [], []
     started = time.monotonic()
-    origin = compat.provenance(runtime)
+    origin = compat.provenance(runtime, cfg.env_id)
     context.write_json("provenance.json", origin)
     try:
         for episode_index, seed in enumerate(seeds):
@@ -132,12 +148,14 @@ def policy_evaluate(config, output_dir, context):
                 goal.append(oracle["goal_xyz"][0].copy())
                 if frames:
                     frames.append(env.frame())
-            distances, position_diagnostics = _goal_position_diagnostics(cube, goal)
+            distances, center_success, region_success, position_diagnostics = _goal_success_diagnostics(cube, goal)
             trajectory = {"observations": np.asarray(states), "actions": np.asarray(actions),
                           "proposed_actions": np.asarray(proposed), "policy_observations": np.asarray(policy_obs),
                           "rewards": np.asarray(rewards), "success": np.asarray(success),
                           "cube_xyz": np.asarray(cube), "tcp_xyz": np.asarray(tcp),
                           "goal_xyz": np.asarray(goal), "goal_distance_m": np.asarray(distances),
+                          "center_success": np.asarray(center_success),
+                          "original_region_success": np.asarray(region_success),
                           "seed": np.asarray(seed)}
             np.savez_compressed(output / f"trajectory_{episode_index:03d}.npz", **trajectory)
             trajectories.append(trajectory)
@@ -148,13 +166,17 @@ def policy_evaluate(config, output_dir, context):
                    "trajectory": f"trajectory_{episode_index:03d}.npz",
                    "video": None, "video_frames": 0, **position_diagnostics}
             if frames:
-                import imageio.v2 as imageio
-                name = f"episode_{seed}.mp4"
                 fps = int(env.native.control_freq)
-                imageio.mimsave(output / name, frames, fps=fps, macro_block_size=1,
-                               codec="libx264", ffmpeg_params=["-pix_fmt", "yuv420p"])
-                row.update(video=name, video_frames=len(frames), video_fps=fps,
-                           video_duration_s=len(frames) / fps)
+                if cfg.env_id == "WMS-PushCubeCenter-v1":
+                    from .media import write_video
+                    row.update(write_video(output, f"episode_{seed}", frames, fps, compatibility=True))
+                else:
+                    import imageio.v2 as imageio
+                    name = f"episode_{seed}.mp4"
+                    imageio.mimsave(output / name, frames, fps=fps, macro_block_size=1,
+                                   codec="libx264", ffmpeg_params=["-pix_fmt", "yuv420p"])
+                    row.update(video=name, video_frames=len(frames), video_fps=fps,
+                               video_duration_s=len(frames) / fps)
             episodes.append(row)
             context.event("progress", {"phase": "policy_evaluate", "episode": episode_index + 1, **row})
         report = {"task": "policy_evaluate", "checkpoint": str(checkpoint),
@@ -168,10 +190,18 @@ def policy_evaluate(config, output_dir, context):
                                    "observation_noise_std": obs_noise},
                   "protocol": {"horizon": env.horizon, "sim_backend": "physx_cuda",
                                "reward_mode": "normalized_dense", "success_termination_ignored": True,
+                               "reward_version": "center-dense/1" if cfg.env_id == "WMS-PushCubeCenter-v1" else "maniskill-normalized-dense",
+                               "success_protocol": {
+                                   "task_success": "center_success" if cfg.env_id == "WMS-PushCubeCenter-v1" else "original_region_success",
+                                   "center_rule": "XY <= 0.02 m and abs(cube z - 0.02 m) <= 0.005 m",
+                                   "original_region_rule": "XY < 0.1 m and cube z < 0.025 m",
+                                   "center_stable_last_5": "All last 5 post-action states satisfy center_rule; reset excluded",
+                                   "geometry_alignment": "T+1 states including reset; native success has T post-action values",
+                               },
                                "planner": "official stochastic MPPI; separate episode seed",
-                                "official_goal_radius_m": float(env.native.goal_radius),
-                                "official_cube_z_threshold_m": float(env.native.cube_half_size) + 0.005,
-                                "official_success_rule": "xy distance < goal_radius and cube z < cube_half_size + 0.005 m; native info.success is authoritative",
+                                "official_goal_radius_m": 0.1,
+                                "official_cube_z_threshold_m": 0.025,
+                                "official_success_rule": "Original PushCube-v1 reference: XY < 0.1 m and cube z < 0.025 m; stored separately from custom task success",
                                 "center_diagnostic_threshold_m": 0.02,
                                 "center_diagnostic_rule": "final XY distance <= 0.02 m; position only, not official success or safety",
                                 "distance_samples": "T+1 simulator states including reset; minimum includes reset",
@@ -195,11 +225,14 @@ def predict(config, output_dir, context):
     checkpoint = _source(inputs, output)
     episode_report = _source(inputs, output, "evaluation_report")
     agent, cfg, training_metadata = compat.checkpoint_load(checkpoint)
+    expected_env_id = params.get("expected_env_id")
+    if expected_env_id and cfg.env_id != expected_env_id:
+        raise ValueError(f"Checkpoint task {cfg.env_id!r} differs from requested task {expected_env_id!r}")
     source = json.loads(episode_report.read_text(encoding="utf-8"))
     horizons = [int(h) for h in params.get("horizons", [1, 5])]
     if not horizons or any(h <= 0 for h in horizons):
         raise ValueError("Prediction horizons must be positive")
-    origin = compat.provenance(runtime)
+    origin = compat.provenance(runtime, cfg.env_id)
     if (source.get("controller") != cfg.control_mode or source.get("env_id") != cfg.env_id
             or source.get("task_sha256") != origin["task_sha256"]
             or source.get("protocol", {}).get("reward_mode") != "normalized_dense"):
@@ -256,6 +289,7 @@ def predict(config, output_dir, context):
                         f"reward_mae_h{h}": float(np.mean(values["reward"]))})
     report = {"task": "predict", "checkpoint": str(checkpoint), "evaluation_report": str(episode_report),
               "checkpoint_sha256": compat.file_sha256(checkpoint), "task_sha256": origin["task_sha256"],
+              "env_id": cfg.env_id, "reward_version": source.get("protocol", {}).get("reward_version"),
               "training_metadata": training_metadata, "metrics": metrics, "records": records,
               "semantics": "Within-checkpoint latent-space error; not Cartesian error, collision probability or cross-checkpoint ranking",
               "safety_status": "not_measured"}
@@ -273,6 +307,16 @@ def _html_evaluation(output, report):
         return "是" if value is True else "否" if value is False else "未记录"
 
     protocol = report.get("protocol", {})
+    is_center = report.get("env_id") == "WMS-PushCubeCenter-v1"
+    task_label = "中心任务" if is_center else "官方"
+
+    def rate(field):
+        values = [ep.get(field) for ep in report["episodes"]]
+        if not values or any(type(value) is not bool for value in values):
+            return "未完整记录"
+        count = sum(values)
+        return f"{count}/{len(values)}（{100 * count / len(values):.1f}%）"
+
     rows = []
     recorded_count = sum(bool(ep.get("video") or ep.get("video_webm")) for ep in report["episodes"])
     for ep in report["episodes"]:
@@ -288,7 +332,7 @@ def _html_evaluation(output, report):
                     sources.append(f'<source src="{html.escape(str(path), quote=True)}" type="{media}">')
             poster = (' poster="' + html.escape(str(ep["video_poster"]), quote=True) + '"') if ep.get("video_poster") else ""
             url = html.escape(str(video_path or webm_path), quote=True)
-            video = (f'<video controls preload="metadata" width="480"{poster}>' + ''.join(sources)
+            video = (f'<video controls loop playsinline preload="metadata" width="480"{poster}>' + ''.join(sources)
                      + f'浏览器无法播放时请<a href="{url}">下载录像</a>。</video>'
                      + f'<p>{duration_text} · <a href="{url}" target="_blank" rel="noreferrer">打开 / 下载原录像</a></p>')
         else:
@@ -296,7 +340,9 @@ def _html_evaluation(output, report):
         values = [str(ep["seed"]), f'{ep["return"]:.3f}', flag(ep.get("success_once")),
                   flag(ep.get("success_at_end")), distance(ep.get("final_goal_distance_m")),
                   distance(ep.get("min_goal_distance_m")), flag(ep.get("center_within_2cm")),
-                  str(ep.get("action_intervention_steps", "未记录"))]
+                  str(ep.get("action_intervention_steps", "未记录")),
+                  flag(ep.get("region_success_at_end")), flag(ep.get("center_success_at_end")),
+                  flag(ep.get("center_stable_last_5"))]
         rows.append('<tr>' + ''.join('<td>' + html.escape(value) + '</td>' for value in values)
                     + '<td>' + video + '</td></tr>')
     text = '<!doctype html><meta charset="utf-8"><title>TD-MPC2 PushCube 评测</title>'
@@ -309,24 +355,39 @@ video{width:480px;max-width:100%;display:block;border-radius:8px}
 tr:first-child{display:none}tr{margin:16px 0;padding:12px;border:1px solid #dce1e8;border-radius:12px}
 td{padding:5px 0;border:0;display:grid;grid-template-columns:140px 1fr;gap:8px}
 td:before{color:#64748b}td:nth-child(1):before{content:'种子'}td:nth-child(2):before{content:'回报'}
-td:nth-child(3):before{content:'官方曾成功'}td:nth-child(4):before{content:'官方最终成功'}
+td:nth-child(3):before{content:'本任务曾成功'}td:nth-child(4):before{content:'本任务最终成功'}
 td:nth-child(5):before{content:'最终距圆心'}td:nth-child(6):before{content:'最小距圆心'}
 td:nth-child(7):before{content:'最终圆心2cm内'}td:nth-child(8):before{content:'动作干预步数'}
-td:nth-child(9){display:block;margin-top:12px}}
+td:nth-child(9):before{content:'原区域最终成功'}td:nth-child(10):before{content:'中心最终成功'}
+td:nth-child(11):before{content:'末5步中心稳定'}td:nth-child(12){display:block;margin-top:12px}}
 </style>'''
-    text += '<h1>TD-MPC2 × ManiSkill PushCube</h1><p>真实仿真 · 状态输入 · 潜空间规划 · 固定检查点评测</p>'
-    text += ('<div class="notice"><strong>官方目标区域成功不等于推到圆心。</strong>'
-             '官方成功保留仿真器的判定；“最终圆心 2cm 内”只是补充的 XY 位置诊断，'
-             '不更改原基准、奖励或训练目标，也不是安全判定。未记录的历史字段不会被当作成功或失败。</div>')
-    text += ('<p>本次记录的官方条件：方块中心到圆心的 XY 距离 &lt; '
+    text += '<h1>TD-MPC2 × ' + html.escape(report.get("env_id", "ManiSkill PushCube")) + '</h1><p>真实仿真 · 状态输入 · 潜空间规划 · 固定检查点评测</p>'
+    if is_center:
+        text += ('<div class="notice"><strong>独立中心精度任务：WMS-PushCubeCenter-v1。</strong>'
+                 '中心任务成功要求 XY 距离 ≤ 2cm，且方块中心高度在 2cm ± 0.5cm；'
+                 '末5步稳定要求最后5个执行动作后的状态均满足条件。该任务已调整奖励，'
+                 '“中心任务成功”不是原 PushCube-v1 的官方10cm成功指标。</div>')
+    else:
+        text += ('<div class="notice"><strong>官方目标区域成功不等于推到圆心。</strong>'
+                 '官方成功保留仿真器的判定；“最终圆心 2cm 内”只是补充的 XY 位置诊断，'
+                 '不更改原基准、奖励或训练目标，也不是安全判定。未记录的历史字段不会被当作成功或失败。</div>')
+    text += ('<p>原 PushCube-v1 区域条件：方块中心到圆心的 XY 距离 &lt; '
              + distance(protocol.get("official_goal_radius_m")) + '，且方块中心 z &lt; '
              + distance(protocol.get("official_cube_z_threshold_m")) + '。'
-             '补充位置诊断：最终 XY 距离 ≤ 2.00 cm；最小距离包含重置时刻。</p>')
+             '中心成功额外检查桌面高度；“最终圆心2cm内”仅检查 XY。最小距离包含重置时刻。</p>')
+    text += ('<p><strong>最终中心成功：' + rate("center_success_at_end")
+             + ' · 末5步中心稳定：' + rate("center_stable_last_5")
+             + '</strong> · 原10cm区域最终成功：' + rate("region_success_at_end") + '</p>')
+    final_distances = [ep.get("final_goal_distance_m") for ep in report["episodes"]]
+    average_distance = (sum(final_distances) / len(final_distances)
+                        if final_distances and all(value is not None for value in final_distances) else None)
+    text += '<p>最终平均圆心距离：' + distance(average_distance) + '。未知历史字段不填0。</p>'
     text += (f'<p>共 {len(report["episodes"])} 个回合，本报告只附 {recorded_count} 条录像。'
              '未录制的回合仍有数值与轨迹结果；录像按仿真控制频率播放，短回放不代表任务执行失败。</p>')
     text += '<p>任务成功不代表安全。当前未测量碰撞、接触力等安全信号；视频为真实仿真画面。</p>'
     text += '<p>检查点：' + html.escape(report["checkpoint"]) + '</p><p>干预：' + html.escape(json.dumps(report["intervention"])) + '</p>'
-    text += ('<div class="table-scroll"><table><tr><th>种子</th><th>回报</th><th>官方曾成功</th><th>官方最终成功</th>'
+    text += ('<div class="table-scroll"><table><tr><th>种子</th><th>回报</th><th>' + task_label + '曾成功</th><th>' + task_label + '最终成功</th>'
              '<th>最终距圆心（XY）</th><th>最小距圆心（XY）</th><th>最终圆心 2cm 内<br>仅位置诊断</th>'
-             '<th>动作干预步数</th><th>录像 / 回放时长</th></tr>' + ''.join(rows) + '</table></div>')
+             '<th>动作干预步数</th><th>原10cm区域最终成功</th><th>中心最终成功<br>含桌面高度</th>'
+             '<th>末5步中心稳定</th><th>录像 / 回放时长</th></tr>' + ''.join(rows) + '</table></div>')
     (output / "visualization.html").write_text(text, encoding="utf-8")

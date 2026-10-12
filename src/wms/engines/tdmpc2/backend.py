@@ -9,6 +9,27 @@ import time
 from . import compat
 
 
+def _check_warm_start_config(saved, current):
+    """Old official checkpoints remain valid; cross-task transfer is explicit work."""
+    for key in ("env_id", "control_mode", "obs_shape", "action_dim", "model_size"):
+        if saved.get(key) != current.get(key):
+            raise ValueError(f"Warm-start checkpoint {key} differs from training configuration")
+    saved_reward = saved.get("reward_version")
+    if saved_reward is None and saved.get("env_id") == "PushCube-v1":
+        saved_reward = "maniskill-normalized-dense"
+    current_reward = current.get("reward_version", "maniskill-normalized-dense")
+    if saved_reward != current_reward:
+        raise ValueError("Warm-start checkpoint reward_version differs from training configuration")
+
+
+def _recording_starts(total_steps, batch_steps):
+    """Choose existing episode batches only; recording never adds simulator resets."""
+    if total_steps <= 0 or batch_steps <= 0 or total_steps % batch_steps:
+        raise ValueError("Recording needs complete episode batches")
+    return sorted({0, *((int(total_steps * fraction) // batch_steps) * batch_steps
+                         for fraction in (.25, .5, .75)), total_steps - batch_steps})
+
+
 def train(runtime, params, output, context, seed=0, checkpoint=None):
     import torch
     baseline = compat.prepare(runtime)
@@ -17,30 +38,40 @@ def train(runtime, params, output, context, seed=0, checkpoint=None):
     compat.seed_all(seed)
     output = Path(output)
     cfg = compat.make_config(baseline, params, output, seed)
-    env = compat.StateEnvironment(cfg, cfg.num_envs)
-    agent = TDMPC2(cfg)
-    if checkpoint:
-        data = torch.load(checkpoint, map_location="cuda", weights_only=True)
-        for key in ("control_mode", "obs_shape", "action_dim", "model_size"):
-            if data["config"][key] != compat.plain_config(cfg)[key]:
-                raise ValueError(f"Warm-start checkpoint {key} differs from training configuration")
-        agent.load({"model": data["model"]})
-    # Model-only warm start is deliberate: no claim of replay/optimizer/RNG resume.
-    origin = compat.provenance(runtime)
-    context.write_json("provenance.json", origin)
-    context.write_json("config.resolved.json", compat.plain_config(cfg))
-    initial = {key: value.detach().cpu().clone() for key, value in agent.model.state_dict().items()}
-    compat.checkpoint_save(agent, cfg, output / "initial.pt", {"environment_steps": 0, "seed": seed})
-    buffer = Buffer(cfg)
-    steps, updates, episodes = 0, 0, 0
-    latest, history = {}, []
-    warmed = False
-    started = time.monotonic()
-    next_checkpoint = int(params.get("checkpoint_every", 25000))
-    checkpoints = ["initial.pt"]
-    if cfg.steps % (cfg.num_envs * env.horizon):
-        raise ValueError("steps must be a multiple of num_envs * 50 so every collected transition enters replay")
+    record_training = bool(params.get("record_training", False))
+    env = compat.StateEnvironment(cfg, cfg.num_envs, render=record_training)
     try:
+        if cfg.steps % (cfg.num_envs * env.horizon):
+            raise ValueError("steps must be a multiple of num_envs * episode horizon so every collected transition enters replay")
+        agent = TDMPC2(cfg)
+        if checkpoint:
+            data = torch.load(checkpoint, map_location="cuda", weights_only=True)
+            _check_warm_start_config(data["config"], compat.plain_config(cfg))
+            if cfg.env_id == "WMS-PushCubeCenter-v1":
+                if data.get("metadata", {}).get("task_sha256") != compat.task_definition(cfg.env_id)["task_sha256"]:
+                    raise ValueError("Warm-start center task source differs; use a separately named transfer experiment")
+            agent.load({"model": data["model"]})
+        # Model-only warm start is deliberate: no claim of replay/optimizer/RNG resume.
+        origin = compat.provenance(runtime, env_id=cfg.env_id)
+        semantics = {"env_id": cfg.env_id,
+                     "reward_version": cfg.get("reward_version", "maniskill-normalized-dense"),
+                     "task_profile": cfg.get("task_profile"),
+                     "task_sha256": origin["task_sha256"]}
+        context.write_json("provenance.json", origin)
+        context.write_json("config.resolved.json", compat.plain_config(cfg))
+        initial = {key: value.detach().cpu().clone() for key, value in agent.model.state_dict().items()}
+        compat.checkpoint_save(agent, cfg, output / "initial.pt",
+                               {"environment_steps": 0, "seed": seed, **semantics})
+        buffer = Buffer(cfg)
+        steps, updates, episodes = 0, 0, 0
+        latest, history = {}, []
+        warmed = False
+        started = time.monotonic()
+        next_checkpoint = int(params.get("checkpoint_every", 25000))
+        checkpoints = ["initial.pt"]
+        selected_starts = set(_recording_starts(int(cfg.steps), int(cfg.num_envs) * env.horizon)) if record_training else set()
+        recordings, frames = [], []
+        recording_start, recording_updates, recording_random_steps = None, None, 0
         obs, _ = env.reset(seed)
         observations = [obs.detach().cpu().clone()]
         actions, rewards = [], []
@@ -48,8 +79,14 @@ def train(runtime, params, output, context, seed=0, checkpoint=None):
         success_once = torch.zeros(cfg.num_envs, dtype=torch.bool, device=obs.device)
         while steps < cfg.steps:
             context.check_cancelled()
+            if not actions and steps in selected_starts:
+                recording_start, recording_updates = steps, updates
+                recording_random_steps = 0
+                frames = [env.frame().copy()]
             if steps <= cfg.seed_steps:
                 action = torch.rand((cfg.num_envs, cfg.action_dim), device=obs.device) * 2 - 1
+                if frames:
+                    recording_random_steps += 1
             else:
                 action = agent.act(obs, t0=not actions, eval_mode=False)
             new_obs, reward, terminated, truncated, info = env.step(action)
@@ -60,6 +97,8 @@ def train(runtime, params, output, context, seed=0, checkpoint=None):
             success_once |= info["success"].bool()
             steps += cfg.num_envs
             obs = new_obs
+            if frames:
+                frames.append(env.frame().copy())
             # Insert complete episodes before sampling updates. No auto-reset means
             # observations[-1] is always the actual final simulator observation.
             if len(actions) == env.horizon:
@@ -74,6 +113,32 @@ def train(runtime, params, output, context, seed=0, checkpoint=None):
                 with (output / "training_history.jsonl").open("a", encoding="utf-8") as file:
                     file.write(json.dumps(row, allow_nan=False) + "\n")
                 context.event("progress", {"phase": "train", **row})
+                if frames:
+                    from .media import write_video
+                    oracle = env.oracle()
+                    cube = oracle["cube_xyz"][0].tolist()
+                    goal = oracle["goal_xyz"][0].tolist()
+                    recording = {"train_step_start": recording_start, "train_step_end": steps,
+                                 "environment_index": 0, "episode_steps": len(actions),
+                                 "update_count_start": recording_updates, "update_count_end": updates,
+                                 "policy_mode": "exploratory_training_policy_env0",
+                                 "random_action_steps": recording_random_steps,
+                                 "return": float(episode_return[0].item()),
+                                 "success_once": bool(success_once[0].item()),
+                                 "success_at_end": bool(info["success"][0].item()),
+                                 "final_cube_xyz": cube, "final_goal_xyz": goal,
+                                 "final_goal_distance_m": math.hypot(cube[0] - goal[0], cube[1] - goal[1]),
+                                 **semantics}
+                    recording.update(write_video(output, f"training_{recording_start:07d}", frames,
+                                                 int(env.native.control_freq), compatibility=True))
+                    recordings.append(recording)
+                    context.write_json("training_recordings.json", {
+                        "task": "training_recordings", **semantics,
+                        "selected_batch_start_steps": sorted(selected_starts),
+                        "semantics": "Actual environment 0 during exploratory training, including random initialization actions; not an independent policy evaluation.",
+                        "recordings": recordings})
+                    context.event("progress", {"phase": "training_recording", **recording})
+                    frames = []
                 obs, _ = env.reset()
                 observations = [obs.detach().cpu().clone()]
                 actions, rewards = [], []
@@ -92,7 +157,7 @@ def train(runtime, params, output, context, seed=0, checkpoint=None):
             if next_checkpoint > 0 and steps >= next_checkpoint:
                 name = f"checkpoint_{steps:07d}.pt"
                 compat.checkpoint_save(agent, cfg, output / name,
-                                       {"environment_steps": steps, "update_count": updates, "seed": seed})
+                                       {"environment_steps": steps, "update_count": updates, "seed": seed, **semantics})
                 checkpoints.append(name)
                 next_checkpoint += int(params.get("checkpoint_every", 25000))
         if not updates:
@@ -100,7 +165,7 @@ def train(runtime, params, output, context, seed=0, checkpoint=None):
         delta = sum(float((value.detach().cpu().double() - initial[key].double()).square().sum())
                     for key, value in agent.model.state_dict().items()) ** 0.5
         metadata = {"environment_steps": steps, "update_count": updates, "seed": seed,
-                    "upstream_commit": origin["commit"]}
+                    "upstream_commit": origin["commit"], **semantics}
         compat.checkpoint_save(agent, cfg, output / "model.pt", metadata)
         checkpoints.append("model.pt")
         report = {"task": "train", **metadata, "episodes": episodes,
@@ -112,6 +177,8 @@ def train(runtime, params, output, context, seed=0, checkpoint=None):
                   "control_mode": cfg.control_mode, "sim_backend": "physx_cuda",
                   "training_budget_note": "Budgeted single-seed training; not a full paper reproduction",
                   "safety_status": "not_measured"}
+        if record_training:
+            report.update(training_recordings=recordings, training_recordings_file="training_recordings.json")
         context.write_json("training.json", report)
         return report
     finally:

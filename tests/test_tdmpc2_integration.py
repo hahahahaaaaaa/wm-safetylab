@@ -69,3 +69,55 @@ def test_historical_report_does_not_invent_distance(tmp_path):
     page = (tmp_path / 'visualization.html').read_text(encoding='utf-8')
     assert '<td>未记录</td><td>未记录</td><td>未记录</td>' in page
     assert '本回合未录制（不是播放失败）' in page
+
+
+def test_center_success_requires_table_height_and_five_post_action_states():
+    from wms.engines.tdmpc2.native import _goal_success_diagnostics
+    goal = [[0, 0, 0]] * 6
+    # Reset is outside the center: all five actual post-action samples count.
+    distances, center, region, summary = _goal_success_diagnostics(
+        [[.2, 0, .02]] + [[.01, 0, .02]] * 5, goal)
+    assert center == [False] + [True] * 5
+    assert region == [False] + [True] * 5
+    assert summary['center_stable_last_5'] is True
+    assert summary['center_success_at_end'] is True
+    assert summary['region_success_at_end'] is True
+    # An airborne cube can satisfy the XY diagnostic, never center success.
+    _, center, region, summary = _goal_success_diagnostics(
+        [[.01, 0, .02]] * 5 + [[.01, 0, .08]], goal)
+    assert summary['center_within_2cm'] is True
+    assert summary['center_success_at_end'] is False
+    assert summary['center_stable_last_5'] is False
+    assert summary['region_success_at_end'] is False
+    # Falling below the tabletop passes the original one-sided z check,
+    # while the independent center task requires a real tabletop height.
+    _, _, _, summary = _goal_success_diagnostics([[.01, 0, -.1]], [[0, 0, 0]])
+    assert summary['region_success_at_end'] is True
+    assert summary['center_success_at_end'] is False
+    # Four post-action states must not be inflated to a five-step stability claim.
+    _, _, _, summary = _goal_success_diagnostics([[.01, 0, .02]] * 5, goal[:5])
+    assert summary['center_success_at_end'] is True
+    assert summary['center_stable_last_5'] is False
+
+
+def test_center_report_labels_custom_success_and_continuous_video(tmp_path):
+    from wms.engines.tdmpc2.native import _html_evaluation
+    report = {'env_id': 'WMS-PushCubeCenter-v1', 'checkpoint': 'center-model.pt',
+              'intervention': {}, 'protocol': {'official_goal_radius_m': .1,
+                                               'official_cube_z_threshold_m': .025},
+              'episodes': [{'seed': 1, 'return': 10, 'success_once': True,
+                            'success_at_end': True, 'center_success_at_end': True,
+                            'center_stable_last_5': False, 'region_success_at_end': True,
+                            'center_within_2cm': True, 'final_goal_distance_m': .012,
+                            'min_goal_distance_m': .005, 'video': 'center.mp4',
+                            'video_webm': 'center.webm', 'video_poster': 'center.png'}]}
+    _html_evaluation(tmp_path, report)
+    page = (tmp_path / 'visualization.html').read_text(encoding='utf-8')
+    assert '独立中心精度任务：WMS-PushCubeCenter-v1' in page
+    assert '<th>中心任务最终成功</th>' in page
+    assert '<th>官方最终成功</th>' not in page
+    assert '最终中心成功：1/1（100.0%）' in page
+    assert '末5步中心稳定：0/1（0.0%）' in page
+    assert '最终平均圆心距离：1.20 cm' in page
+    assert 'controls loop playsinline' in page
+    assert 'poster="center.png"' in page

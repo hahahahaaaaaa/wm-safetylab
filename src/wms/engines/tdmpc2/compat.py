@@ -71,8 +71,11 @@ def make_config(baseline, params, output, seed):
     allowed = set(values) | {"iterations", "num_samples", "num_elites", "num_pi_trajs",
                              "horizon", "lr", "eval_freq", "eval_episodes_per_env"}
     values.update({key: value for key, value in params.items() if key in allowed})
-    if values["env_id"] != "PushCube-v1" or values["obs"] != "state":
-        raise ValueError("This recipe is specifically PushCube-v1 with state observations")
+    if values["env_id"] not in ("PushCube-v1", "WMS-PushCubeCenter-v1") or values["obs"] != "state":
+        raise ValueError("Select PushCube-v1 or WMS-PushCubeCenter-v1 with state observations")
+    values["tasks"] = [values["env_id"]]
+    values["task_profile"] = "center2cm-v1" if values["env_id"] == "WMS-PushCubeCenter-v1" else "region10cm"
+    values["reward_version"] = "center-dense/1" if values["env_id"] == "WMS-PushCubeCenter-v1" else "maniskill-normalized-dense"
     if values["control_mode"] != "pd_joint_delta_pos":
         raise ValueError("Keep pd_joint_delta_pos; other controllers need a separate trained recipe")
     if values["model_size"] not in MODEL_SIZE:
@@ -109,6 +112,10 @@ class StateEnvironment:
         import mani_skill.envs  # noqa: F401 -- task registration
         import numpy as np
         self.cfg, self.num_envs = cfg, int(num_envs)
+        if cfg.env_id == "WMS-PushCubeCenter-v1":
+            from wms.scenarios.maniskill import push_cube_center  # noqa: F401 -- registration
+            if cfg.get("reward_version") != "center-dense/1":
+                raise ValueError("Center task requires its separately trained reward version")
         self.env = gym.make(cfg.env_id, robot_uids="panda", num_envs=self.num_envs,
                             obs_mode="state", control_mode=cfg.control_mode,
                             reward_mode="normalized_dense", sim_backend="physx_cuda",
@@ -200,6 +207,11 @@ def checkpoint_load(path):
     if data.get("format") != "wms.tdmpc2/1":
         raise ValueError("Expected a platform TD-MPC2 checkpoint with its observation/controller config")
     cfg = OmegaConf.create(data["config"])
+    if cfg.env_id == "WMS-PushCubeCenter-v1":
+        if cfg.get("reward_version") != "center-dense/1":
+            raise ValueError("Checkpoint center reward version is incompatible")
+        if data["metadata"].get("task_sha256") != task_definition(cfg.env_id)["task_sha256"]:
+            raise ValueError("Checkpoint center task implementation differs from current task")
     cfg.num_envs = cfg.num_eval_envs = 1
     agent = TDMPC2(cfg)
     agent.load({"model": data["model"]})
@@ -207,21 +219,38 @@ def checkpoint_load(path):
     return agent, cfg, data.get("metadata", {})
 
 
-def provenance(runtime):
-    import torch
+def task_definition(env_id="PushCube-v1"):
     import inspect
     from mani_skill.envs.tasks.tabletop.push_cube import PushCubeEnv
+    base_file = Path(inspect.getfile(PushCubeEnv))
+    base_hash = file_sha256(base_file)
+    result = {"task_source": str(base_file), "task_sha256": base_hash,
+              "env_id": env_id, "reward_version": "maniskill-normalized-dense"}
+    if env_id == "WMS-PushCubeCenter-v1":
+        from wms.scenarios.maniskill.push_cube_center import PushCubeCenterEnv
+        custom = Path(inspect.getfile(PushCubeCenterEnv))
+        custom_hash = file_sha256(custom)
+        result.update(task_source=str(custom), base_task_source=str(base_file),
+                      base_task_sha256=base_hash, custom_task_sha256=custom_hash,
+                      reward_version="center-dense/1",
+                      task_sha256=hashlib.sha256((base_hash + ":" + custom_hash + ":center-dense/1").encode()).hexdigest())
+    elif env_id != "PushCube-v1":
+        raise ValueError("Unknown PushCube task definition")
+    return result
+
+
+def provenance(runtime, env_id="PushCube-v1"):
+    import torch
     source = Path(runtime["source_dir"])
     commit = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
     dirty = subprocess.check_output(["git", "-C", str(source), "status", "--porcelain"], text=True).strip()
-    task_file = Path(inspect.getfile(PushCubeEnv))
     versions = {}
     for name in ("torch", "mani_skill", "sapien", "gymnasium", "numpy", "torchrl", "tensordict", "omegaconf"):
         versions[name] = importlib.metadata.version(name)
     return {"upstream": "https://github.com/mani-skill/ManiSkill", "commit": commit,
             "upstream_dirty": bool(dirty), "versions": versions,
             "python": sys.executable, "gpu": torch.cuda.get_device_name(0),
-            "task_source": str(task_file), "task_sha256": hashlib.sha256(task_file.read_bytes()).hexdigest(),
+            **task_definition(env_id),
             "compatibility": "original network/loss/MPPI; platform config, raw fixed-horizon env and training orchestration",
             "safety_signals": "not measured; task success is not a safety verdict"}
 

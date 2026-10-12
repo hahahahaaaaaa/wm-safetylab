@@ -132,3 +132,38 @@ def test_metadata_filename_and_declared_task_must_agree(tmp_path):
     write(source / "training.json", policy())
     with pytest.raises(ValueError, match="filename"):
         measure({"source_output_dir": str(source), "output_dir": str(tmp_path / "evaluation")}, {})
+
+
+def test_center_metrics_use_full_cohort_and_preserve_protocol(tmp_path):
+    source, output = tmp_path / 'source', tmp_path / 'evaluation'
+    data = policy()
+    data['env_id'] = 'WMS-PushCubeCenter-v1'
+    data['protocol'] = {'reward_version': 'center-dense/1',
+                        'success_protocol': {'task_success': 'center_success'}}
+    for episode, distance, center, stable in zip(data['episodes'], [.01, .04], [True, False], [False, False]):
+        episode.update(final_goal_distance_m=distance, min_goal_distance_m=.005,
+                       center_success_at_end=center, center_stable_last_5=stable,
+                       region_success_at_end=True)
+    write(source / 'evaluation.json', data)
+    scores = measure({'source_output_dir': str(source), 'output_dir': str(output)}, {})
+    assert scores['tdmpc2_final_goal_distance_m_mean'] == .025
+    assert scores['tdmpc2_min_goal_distance_m_mean'] == .005
+    assert scores['tdmpc2_center_success_at_end_rate'] == .5
+    assert scores['tdmpc2_center_stable_last_5_rate'] == 0
+    assert scores['tdmpc2_region_success_at_end_rate'] == 1
+    saved = json.loads((output / 'tdmpc2_metrics.json').read_text())
+    assert saved['details']['env_id'] == 'WMS-PushCubeCenter-v1'
+    assert saved['details']['reward_version'] == 'center-dense/1'
+    assert saved['details']['success_protocol']['task_success'] == 'center_success'
+
+
+@pytest.mark.parametrize('field', ['final_goal_distance_m', 'min_goal_distance_m',
+                                  'center_success_at_end', 'center_stable_last_5',
+                                  'region_success_at_end'])
+def test_partial_geometry_is_never_filled_with_zero_or_compared_as_full_cohort(tmp_path, field):
+    source = tmp_path / 'source'
+    data = policy()
+    data['episodes'][0][field] = .01 if field.endswith('_m') else True
+    write(source / 'evaluation.json', data)
+    scores = measure({'source_output_dir': str(source), 'output_dir': str(tmp_path / 'evaluation')}, {})
+    assert not any(field in name for name in scores)

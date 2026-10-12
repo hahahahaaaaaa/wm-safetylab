@@ -23,6 +23,7 @@
 | 添加新模型或仿真器 | [开发总指南](docs/ONBOARDING_MODELS_AND_ENVIRONMENTS.zh-CN.md)与[模板](templates/README.zh-CN.md) |
 | 真实模型与机械臂接入 | [TD-MPC2 × PushCube 教程](docs/TD_MPC2_PUSHCUBE_GUIDE.zh-CN.md) |
 | TD-MPC2 实际实验结果 | [验收报告](docs/TD_MPC2_PUSHCUBE_ACCEPTANCE_20261012.zh-CN.md) |
+| 独立2cm圆心任务、重训练与全过程记录 | [中心精度任务](docs/PUSHCUBE_CENTER_TASK_20261012.zh-CN.md) |
 | 上游项目与发布边界 | [第三方来源](THIRD_PARTY.md) |
 
 ## 快速开始
