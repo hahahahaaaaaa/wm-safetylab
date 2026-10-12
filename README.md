@@ -14,6 +14,7 @@
 
 | 目标 | 文档 |
 |---|---|
+| 了解平台有哪些模型、能做什么、如何实现及未来扩展 | [项目说明](docs/PROJECT_OVERVIEW.zh-CN.md) |
 | 从新机器部署到第一次实验 | [部署与日常使用](docs/DEPLOYMENT_AND_USAGE.zh-CN.md) |
 | 每个模型的安装、配方、参数、输出和验证范围 | [全部模型与实验使用手册](docs/MODELS_AND_EXPERIMENTS.zh-CN.md) |
 | 后端、CLI、Python API 和独立评价 | [开发与接口手册](docs/DEVELOPMENT.zh-CN.md) |
