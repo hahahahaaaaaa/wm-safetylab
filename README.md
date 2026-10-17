@@ -23,6 +23,7 @@
 | 添加新模型或仿真器 | [开发总指南](docs/ONBOARDING_MODELS_AND_ENVIRONMENTS.zh-CN.md)与[模板](templates/README.zh-CN.md) |
 | 真实模型与机械臂接入 | [TD-MPC2 × PushCube 教程](docs/TD_MPC2_PUSHCUBE_GUIDE.zh-CN.md) |
 | TD-MPC2 实际实验结果 | [验收报告](docs/TD_MPC2_PUSHCUBE_ACCEPTANCE_20261012.zh-CN.md) |
+| 规则 / Chat / JEV 具身决策实验 | [EmbodiedJev 使用](native/embodied_jev/README.zh-CN.md)与[接线验收](docs/EMBODIED_JEV_ACCEPTANCE_20261012.zh-CN.md) |
 | 独立2cm圆心任务、重训练与全过程记录 | [中心精度任务](docs/PUSHCUBE_CENTER_TASK_20261012.zh-CN.md) |
 | 上游项目与发布边界 | [第三方来源](THIRD_PARTY.md) |
 
@@ -79,6 +80,7 @@ python -m wms runs
 | 仿真 | ManiSkill PushCube、Pendulum 教学模板 | 环境运行、轨迹与录像；安全信号按实际实现报告 |
 | 状态 WM | 小型状态 WM＋ManiSkill | 采集、训练、后果预测与物理位置对照 |
 | 可训练控制 WM | TD-MPC2＋PushCube | 已实跑训练、MPPI 控制、动作扰动及潜空间预测 |
+| 具身决策 | EmbodiedJev＋MuJoCo Panda | 三原生任务、规则/Chat/JEV 候选选择、状态回放与独立评价；候选概率不代表成功或危险概率 |
 
 GitHub 不包含虚拟环境、模型权重、数据集、机器配置或完整实验录像。首次克隆时未配置的原生配方会显示未配置；按使用手册准备资源和 runtime 文件即可启用。每个模型的真实验证范围见模型手册，不能以配方存在代替运行成功。
 
@@ -126,3 +128,7 @@ npm run build
 ```
 
 GitHub Actions 包含 Windows/Linux CPU 测试与 Web 构建。GPU 验收需要目标机器上的原生依赖、数据和权重，CPU CI 不代替真实模型验证。
+
+## EmbodiedJev 可视化过程对比
+
+Web 导航的“过程对比”提供两路/三路真实机器人场景、实时快照、同步回放和逐步决策证据。使用方式见 [过程对比说明](docs/EMBODIED_JEV_PROCESS_COMPARISON.zh-CN.md)，验证结果见 [前端验收](docs/EMBODIED_JEV_FRONTEND_ACCEPTANCE_20261012.zh-CN.md)。

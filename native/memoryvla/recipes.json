@@ -1,0 +1,38 @@
+{
+  "recipes": {
+    "memoryvla-simpler-bridge-eval": {
+      "name": "MemoryVLA · SimplerEnv-Bridge 官方检查点闭环评测",
+      "description": "MemoryVLA 原版（openvla-codebase）memvla-bridge 检查点，在 SimplerEnv-Bridge 四个 WidowX 抓放任务上闭环评测，参数与官方 eval_bridge.sh 相同（每任务 24 回合）。默认 bf16；与官方脚本的差异写在 evaluation.json。",
+      "task": "native",
+      "direction": "vla",
+      "entrypoint": "wms.engines.memoryvla.native:simpler_evaluate",
+      "runtime": {"native_key": "memoryvla", "config_file": "runtime.json"},
+      "seed": 0,
+      "timeout_s": 21600,
+      "inputs": {},
+      "params": {
+        "episodes": [0, 24],
+        "control_freq": 5,
+        "sim_freq": 500,
+        "max_episode_steps": 120,
+        "use_bf16": true,
+        "cfg_scale": 1.5,
+        "tasks": [
+          {"name": "cube", "env_name": "StackGreenCubeOnYellowCubeBakedTexInScene-v0", "scene_name": "bridge_table_1_v1",
+           "robot": "widowx", "rgb_overlay": "bridge_real_eval_1.png", "robot_init_x": 0.147, "robot_init_y": 0.028},
+          {"name": "carrot", "env_name": "PutCarrotOnPlateInScene-v0", "scene_name": "bridge_table_1_v1",
+           "robot": "widowx", "rgb_overlay": "bridge_real_eval_1.png", "robot_init_x": 0.147, "robot_init_y": 0.028},
+          {"name": "spoon", "env_name": "PutSpoonOnTableClothInScene-v0", "scene_name": "bridge_table_1_v1",
+           "robot": "widowx", "rgb_overlay": "bridge_real_eval_1.png", "robot_init_x": 0.147, "robot_init_y": 0.028},
+          {"name": "eggplant", "env_name": "PutEggplantInBasketScene-v0", "scene_name": "bridge_table_1_v2",
+           "robot": "widowx_sink_camera_setup", "rgb_overlay": "bridge_sink.png", "robot_init_x": 0.127, "robot_init_y": 0.06}
+        ],
+        "reference": {"spoon": 75.0, "carrot": 75.0, "cube": 37.5, "eggplant": 100.0, "average": 71.9}
+      },
+      "metrics": [{"name": "memoryvla_simpler", "entrypoint": "wms.engines.memoryvla.metrics:measure",
+                   "params": {"reference": {"spoon": 75.0, "carrot": 75.0, "cube": 37.5, "eggplant": 100.0, "average": 71.9}},
+                   "version": "memoryvla-simpler/1"}],
+      "tags": ["memoryvla", "simplerenv", "bridge", "widowx", "rgb-input", "closed-loop", "S1", "S2", "S5", "S6"]
+    }
+  }
+}
