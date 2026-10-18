@@ -18,96 +18,40 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
-import os
 from pathlib import Path
-import random
-import sys
 import time
+
+from .common import (argv_for_task as _argv, load_inference, merged_args as _merged_args, overlay_dir as _overlay_dir,
+                     prepare_process as _prepare_process, seed_all as _seed, versions as _versions)
 
 TASK_KEYS = ("name", "env_name", "scene_name", "robot", "rgb_overlay", "robot_init_x", "robot_init_y")
 
 
-def _argv(task, checkpoint, overlay_dir, params, episodes):
-    """The arguments script/eval/bridge/eval_bridge.sh passes for one task."""
-    x, y = str(task["robot_init_x"]), str(task["robot_init_y"])
-    return ["--ckpt-path", str(checkpoint), "--robot", task["robot"], "--policy-setup", "widowx_bridge",
-            "--control-freq", str(params.get("control_freq", 5)), "--sim-freq", str(params.get("sim_freq", 500)),
-            "--max-episode-steps", str(params.get("max_episode_steps", 120)),
-            "--env-name", task["env_name"], "--scene-name", task["scene_name"],
-            "--rgb-overlay-path", str(Path(overlay_dir) / task["rgb_overlay"]),
-            "--robot-init-x-range", x, x, "1", "--robot-init-y-range", y, y, "1",
-            "--obj-variation-mode", "episode", "--obj-episode-range", str(episodes[0]), str(episodes[1]),
-            "--robot-init-rot-quat-center", "0", "0", "0", "1",
-            "--robot-init-rot-rpy-range", "0", "0", "1", "0", "0", "1", "0", "0", "1"]
+class _ActionRecorder:
+    """Pass-through around VLAInference that writes every step's output to actions.jsonl.
 
+    Only used with params.log_actions; it does not change what the model computes."""
 
-def _deep_update(base, updates):
-    for key, value in updates.items():
-        if isinstance(value, dict) and isinstance(base.get(key), dict):
-            _deep_update(base[key], value)
-        else:
-            base[key] = value
-    return base
+    def __init__(self, model, log):
+        self._model, self._log, self.episode, self._t = model, log, {}, 0
 
+    def reset(self, task_description):
+        self._t = 0
+        return self._model.reset(task_description)
 
-def _merged_args(argv, checkpoint, use_bf16):
-    """Same steps as the upstream __main__ block: SimplerEnv get_args, then config.yaml underneath."""
-    from argparse import Namespace
-    import yaml
-    from simpler_env.evaluation.argparse import get_args
-    saved = sys.argv
-    try:
-        sys.argv = ["simpler_env_inference.py", *argv]
-        args = get_args()
-    finally:
-        sys.argv = saved
-    config_yaml = Path(checkpoint).parents[1] / "config.yaml"
-    yaml_args = yaml.safe_load(config_yaml.read_text(encoding="utf-8")) or {}
-    merged = Namespace(**_deep_update(dict(yaml_args), {**vars(args), "use_bf16": use_bf16}))
-    filtered = {k: v for k, v in vars(merged).items() if k not in {"pretrained_checkpoint", "use_bf16"}}
-    return merged, filtered
+    def step(self, image, task_description, **kwargs):
+        import numpy as np
+        raw, action = self._model.step(image, task_description, **kwargs)
+        sent = np.concatenate([action["world_vector"], action["rot_axangle"], np.asarray(action["gripper"]).reshape(-1)])
+        self._log.write(json.dumps({**self.episode, "t": self._t, "action": [float(v) for v in sent],
+                                    "terminate_episode": float(np.asarray(action["terminate_episode"]).reshape(-1)[0])})
+                        + "\n")
+        self._log.flush()
+        self._t += 1
+        return raw, action
 
-
-def _seed(value):
-    import numpy as np
-    import torch
-    random.seed(value)
-    np.random.seed(value % (2 ** 32))
-    torch.manual_seed(value)
-    torch.cuda.manual_seed_all(value)
-
-
-def _prepare_process(runtime):
-    os.environ["DISPLAY"] = ""
-    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-    os.environ["HF_HUB_OFFLINE"] = "1"            # backbones and tokenizer are prepared by prepare_server.sh
-    for key in ("source_dir", "simpler_dir"):
-        if not Path(runtime[key]).is_dir():
-            raise FileNotFoundError(f"runtime.{key} does not exist: {runtime[key]}")
-    paths = [runtime["source_dir"], runtime["simpler_dir"], str(Path(runtime["simpler_dir"]) / "ManiSkill2_real2sim")]
-    for path in reversed(paths):
-        if path not in sys.path:
-            sys.path.insert(0, path)
-    import tensorflow as tf                       # imported by MemoryVLA's data modules anyway
-    tf.config.set_visible_devices([], "GPU")
-    from prismatic.models.backbones.llm import llama2
-    llama2.LLAMA2_MODELS["llama2-7b-pure"]["hf_hub_path"] = str(runtime["llama2_dir"])
-
-
-def _versions(runtime):
-    import importlib.metadata as metadata
-    import torch
-    packages = {}
-    for name in ("torch", "transformers", "timm", "tensorflow", "sapien", "numpy", "gymnasium", "mediapy"):
-        try:
-            packages[name] = metadata.version(name)
-        except metadata.PackageNotFoundError:
-            packages[name] = None
-    return {"packages": packages, "python": sys.version.split()[0],
-            "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
-            "source_commits": runtime.get("source_commits", {}),
-            "checkpoint": str(runtime["checkpoint"])}
+    def __getattr__(self, name):
+        return getattr(self._model, name)
 
 
 def evaluate(runtime, params, output, context, seed=0):
@@ -125,22 +69,24 @@ def evaluate(runtime, params, output, context, seed=0):
     episodes = [int(v) for v in params.get("episodes", [0, 24])]
     use_bf16 = bool(params.get("use_bf16", True))
     checkpoint = Path(runtime["checkpoint"])
-    overlay_dir = Path(runtime["simpler_dir"]) / "ManiSkill2_real2sim" / "data" / "real_inpainting"
+    overlay_dir = _overlay_dir(runtime)
     output.mkdir(parents=True, exist_ok=True)
     videos = output / "videos"
 
     context.event("progress", {"phase": "loading_model", "checkpoint": str(checkpoint), "bf16": use_bf16})
     _prepare_process(runtime)
-    from evaluation.simpler_env import VLAInference
     from evaluation.simpler_env.maniskill2_evaluator import run_maniskill2_eval_single_episode
     from simpler_env.utils.env.env_builder import get_robot_control_mode
 
-    first_args, first_filtered = _merged_args(_argv(tasks[0], checkpoint, overlay_dir, params, episodes),
-                                              checkpoint, use_bf16)
     _seed(seed)
     load_started = time.time()
-    model = VLAInference(saved_model_path=str(checkpoint), cfg_scale=float(params.get("cfg_scale", 1.5)),
-                         use_bf16=use_bf16, **first_filtered)
+    model, first_args = load_inference(runtime, tasks[0], params, episodes, use_bf16=use_bf16,
+                                       cfg_scale=float(params.get("cfg_scale", 1.5)))
+    action_log = None
+    if params.get("log_actions"):
+        # parity checks against the episode entry: record what the model returned at every step
+        action_log = (output / "actions.jsonl").open("w", encoding="utf-8")
+        model = _ActionRecorder(model, action_log)
     load_seconds = time.time() - load_started
     import torch
     memory_gb = torch.cuda.max_memory_allocated() / 2 ** 30 if torch.cuda.is_available() else None
@@ -161,6 +107,8 @@ def evaluate(runtime, params, output, context, seed=0):
                             context.check_cancelled()
                             episode_seed = seed + 1000 * task_index + episode_id
                             _seed(episode_seed)
+                            if action_log is not None:
+                                model.episode = {"task": task["name"], "episode_id": episode_id, "seed": episode_seed}
                             episode_started = time.time()
                             success = run_maniskill2_eval_single_episode(
                                 model=model, ckpt_path=args.ckpt_path, robot_name=args.robot,
@@ -189,6 +137,8 @@ def evaluate(runtime, params, output, context, seed=0):
                                       "success_rate_pct": 100.0 * sum(successes) / len(successes)}
     finally:
         log.close()
+        if action_log is not None:
+            action_log.close()
 
     reference = params.get("reference", {})
     average = sum(v["success_rate_pct"] for v in per_task.values()) / len(per_task)
@@ -196,7 +146,7 @@ def evaluate(runtime, params, output, context, seed=0):
                          "difference_pct": (per_task[name]["success_rate_pct"] - reference[name]
                                             if name in reference else None)} for name in per_task}
     summary = {
-        "task": "simpler_bridge_evaluate", "benchmark": "SimplerEnv-Bridge (visual matching)",
+        "path": "official", "task": "simpler_bridge_evaluate", "benchmark": "SimplerEnv-Bridge (visual matching)",
         "model": "MemoryVLA (openvla-codebase)", "per_task": per_task, "average_success_pct": average,
         "reference_average_pct": reference.get("average") if len(per_task) == 4 else None,
         "comparison": comparison, "episodes_range": episodes, "seed": seed, "use_bf16": use_bf16,
