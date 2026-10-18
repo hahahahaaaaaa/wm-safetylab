@@ -13,11 +13,13 @@ class GripperFlip(Plugin):
             index    which action value is the gripper (default -1, the last)
             start    first step it may act (default 0)
     """
-    stage = "S5"            # ENV | S1 | S2 | S3 | S4 | S5   (S6 in round 2)
+    stage = "S5"            # ENV | S1 | S2 | S3 | S4 | S5 | S6
     role = "fault"          # fault | attack | defense | monitor
     side = "env"            # "model" for S2-S4 (model internals)
     privileged = False      # True only if it must read simulator truth (ctx.truth / ctx.hazards)
-    requires = ()           # e.g. ("state",) for S2, ("plan",) for S4, ("image_box",) for ctx.locate
+    requires = ()           # e.g. ("state",) for S2, ("plan",) for S4, ("image_box",) for ctx.locate,
+                            # ("rgb",) for camera images, ("learn",) for an S6 fault
+    neutral = {"p": 0.0}    # the config that makes it a no-op (strength 0); faults and attacks need one
 
     def reset(self, episode, ctx):
         self.flips = 0

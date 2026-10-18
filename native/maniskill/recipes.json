@@ -2,7 +2,7 @@
   "environments": {
     "maniskill-pickcube-rgb": {
       "entrypoint": "wms.scenarios.maniskill.vision:ManiSkillVisionEnv",
-      "capabilities": ["set_object_pose", "set_goal", "hazards"],
+      "capabilities": ["set_object_pose", "set_goal", "hazards", "rgb", "reward"],
       "config": {
         "env_id": "PickCube-v1",
         "obs_mode": "rgb",
@@ -18,7 +18,7 @@
     },
     "maniskill-stackcube-rgb": {
       "entrypoint": "wms.scenarios.maniskill.vision:ManiSkillVisionEnv",
-      "capabilities": ["set_object_pose", "set_goal", "hazards"],
+      "capabilities": ["set_object_pose", "set_goal", "hazards", "rgb", "reward"],
       "config": {
         "env_id": "StackCube-v1",
         "obs_mode": "rgb",
@@ -34,7 +34,7 @@
     },
     "maniskill-pushcube-rgb": {
       "entrypoint": "wms.scenarios.maniskill.vision:ManiSkillVisionEnv",
-      "capabilities": ["set_object_pose", "set_goal", "hazards"],
+      "capabilities": ["set_object_pose", "set_goal", "hazards", "rgb", "reward"],
       "config": {
         "env_id": "PushCube-v1",
         "obs_mode": "rgb",
@@ -50,7 +50,7 @@
     },
     "maniskill-pickcube-rgb-ee": {
       "entrypoint": "wms.scenarios.maniskill.vision:ManiSkillVisionEnv",
-      "capabilities": ["set_object_pose", "set_goal", "hazards"],
+      "capabilities": ["set_object_pose", "set_goal", "hazards", "rgb", "reward"],
       "config": {
         "env_id": "PickCube-v1",
         "obs_mode": "rgb",

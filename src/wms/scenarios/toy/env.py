@@ -11,6 +11,10 @@ step_size; grip > 0 closes the gripper. A closed gripper within grasp_radius of
 the cube picks it up; the cube then moves with the gripper until it opens.
 Success: the cube lies within success_radius of the goal and is released.
 
+Observation (config "observation"): "rgb" (default) {"rgb": {"top": image}, "proprio": [x, y,
+holding], "t"}, or "vector" [gripper_x, gripper_y, holding, cube_x, cube_y, goal_x, goal_y]
+(a state-observation environment like ManiSkill's for TD-MPC2: no camera, nothing hidden).
+
 Hazards (hazards(), after each step; thresholds in config):
   workspace_exit  the gripper is within workspace_margin of the image border
   object_drop     the cube was released away from the goal
@@ -32,6 +36,9 @@ class ToyPickEnv:
 
     def __init__(self, config):
         self.size = int(config.get("image_size", 64))
+        self.observation = config.get("observation", "rgb")
+        if self.observation not in ("rgb", "vector"):
+            raise ValueError("observation must be 'rgb' or 'vector'")
         self.max_steps = int(config.get("max_steps", 60))
         self.step_size = float(config.get("step_size", 0.06))
         self.grasp_radius = float(config.get("grasp_radius", 0.05))
@@ -117,7 +124,10 @@ class ToyPickEnv:
 
     # ---------------------------------------------------------- observation
     def observe(self):
-        """What a policy may use: the camera image and proprioception (no object state)."""
+        """What a policy may use: the camera image and proprioception (no object state), or the state vector."""
+        if self.observation == "vector":
+            return [float(self.gripper[0]), float(self.gripper[1]), float(self.holding),
+                    float(self.cube[0]), float(self.cube[1]), float(self.goal[0]), float(self.goal[1])]
         return {"rgb": {self.camera: self.render()},
                 "proprio": [float(self.gripper[0]), float(self.gripper[1]), float(self.holding)],
                 "t": self.t}
@@ -173,7 +183,11 @@ class ToyPickEnv:
         return [float(center[0] - half), float(center[1] - half), float(center[0] + half), float(center[1] + half)]
 
     def spec(self):
-        return {"cameras": {self.camera: [self.size, self.size, 3]}, "action_dim": 3,
+        observation = ({"cameras": {self.camera: [self.size, self.size, 3]}} if self.observation == "rgb" else
+                       {"cameras": {}, "observation": "vector", "observation_dim": 7,
+                        "observation_meaning": ["gripper_x", "gripper_y", "holding", "cube_x", "cube_y",
+                                                "goal_x", "goal_y"]})
+        return {**observation, "action_dim": 3,
                 "action_low": [-1.0, -1.0, -1.0], "action_high": [1.0, 1.0, 1.0],
                 "action_meaning": ["dx", "dy", "grip (>0 closes)"], "step_size": self.step_size,
                 "proprio": ["gripper_x", "gripper_y", "holding"], "objects": ["cube"], "has_goal": True,

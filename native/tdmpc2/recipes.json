@@ -2,7 +2,7 @@
   "models": {
     "tdmpc2-pushcube": {
       "entrypoint": "wms.engines.tdmpc2.adapter:ModelAdapter",
-      "probes": ["state", "predict", "plan"],
+      "probes": ["state", "predict", "plan", "embed"],
       "config": {
         "runtime_config": "$runtime.config_file",
         "source_run": ""
@@ -12,7 +12,7 @@
   "environments": {
     "maniskill-pushcube-state": {
       "entrypoint": "wms.scenarios.maniskill.state:ManiSkillStateEnv",
-      "capabilities": ["set_object_pose", "set_goal", "hazards"],
+      "capabilities": ["set_object_pose", "set_goal", "hazards", "vector", "reward"],
       "config": {
         "runtime_config": "$runtime.config_file",
         "source_run": ""

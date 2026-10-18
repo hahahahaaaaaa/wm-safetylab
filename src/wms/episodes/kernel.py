@@ -33,7 +33,9 @@ Recipe fields (task "native", entrypoint "wms.episodes.kernel:run")
 
 Order inside step t: ENV plugins (target moves) for t -> true state_before -> frame t
 rendered, S1 plugins, logged -> policy acts on that frame (S2-S4 plugins run inside, through
-the model's probes) -> S5 plugins -> simulator step -> hazards, true state_after, after_step.
+the model's probes) -> S5 plugins, then a pending alarm takeover -> simulator step -> hazards,
+true state_after -> S6 on_feedback on the step's transition -> model.learn(transition) for
+models with the learn probe -> after_step (with the transition, read-only) -> logs.
 Every frame k in frames_<cam>.npz matches line t=k of steps.jsonl and trace.jsonl; the extra
 last frame is the observation after the final action. With no plugins, every step is exactly
 what it was before plugins existed.
@@ -129,6 +131,7 @@ class _Episode:
         self.end_reason = "step_limit"
         self.perturbed_steps, self.moves_applied, self.takeovers = 0, 0, 0
         self.hazard_counts = {}
+        self.model, self.learns = None, False
         self.started = False
         self.reset_moves = []          # planner mode: step-0 moves, applied before planning
 
@@ -143,6 +146,7 @@ class _Episode:
     def observe(self, t, applied=None):
         """applied: moves for step t that already happened (planner step 0); else apply them now."""
         self.context.check_cancelled()
+        self.plugins.check_observation(self.raw)
         if applied is None:
             moved = self.apply_moves(t)
         else:
@@ -167,11 +171,11 @@ class _Episode:
         return seen, text
 
     def act_on(self, action):
-        """S5: (action to execute or None to stop, proposed action)."""
-        if not self.plugins.has("on_action"):
+        """S5, then an alarm's takeover: (action to execute or None to stop, proposed action)."""
+        if not self.plugins:
             return action, action
-        executed = self.plugins.call("on_action", action)
-        takeover = self.plugins.takeover
+        executed = self.plugins.call("on_action", action) if self.plugins.has("on_action") else action
+        takeover = self.plugins.alarm_takeover()
         if takeover:
             self.takeovers += 1
             if takeover["kind"] == "stop":
@@ -186,22 +190,43 @@ class _Episode:
         self.record(t, None, transition, seen, records, moved, before, policy_info, proposed=proposed)
         self.end_reason = "plugin_stop"
 
+    def feedback(self, t, action, transition):
+        """The step's transition (wms.plugins.runtime), as the environment returned it."""
+        import numpy as np
+        out = {"t": t, "obs": self.raw, "action": np.asarray(action, dtype=float).copy(),
+               "next_obs": transition["obs"], "reward": transition.get("reward"),
+               "done": bool(transition.get("terminated") or transition.get("truncated")),
+               "taken_over": bool(self.plugins.takeover), "predicted_next": None, "next_state": None}
+        if self.plugins.needs["predicted_next"]:
+            out["predicted_next"] = self.plugins.predicted_next
+        if self.plugins.needs["next_state"] and self.model is not None:
+            out["next_state"] = self.model.embed(transition["obs"])
+        return out
+
     def record(self, t, action, transition, seen, records, moved, before, policy_info, proposed=None):
         hazards = list(self.hazard_source() or []) if self.hazard_source and action is not None else []
         for hazard in hazards:
             self.hazard_counts[hazard["id"]] = self.hazard_counts.get(hazard["id"], 0) + 1
-        self.logger.step(t, action=action, transition=transition, state_before=before,
-                         state_after=self.env.get_state(), perturbations=records, moves=moved,
-                         policy_info=policy_info, seen_obs=seen)
-        self.logger.trace(t, action_proposed=proposed if proposed is not None else action, action=action,
-                          hazards=hazards, env_events=transition.get("events", []), **self.plugins.trace())
+        state_after = self.env.get_state()
+        step_transition = None
+        if action is not None and (self.plugins or self.learns):
+            step_transition = self.feedback(t, action, transition)
+            self.plugins.check_reward(step_transition["reward"])
+            learned = self.plugins.feedback(step_transition, hazards)
+            if self.learns:
+                self.model.learn(learned)
         if self.plugins:
             self.plugins.after_step({"t": t, "action_proposed": proposed if proposed is not None else action,
                                      "action": action, "reward": transition.get("reward"),
                                      "events": list(transition.get("events", [])),
                                      "terminated": bool(transition.get("terminated")),
                                      "truncated": bool(transition.get("truncated")),
-                                     "info": transition.get("info")}, hazards)
+                                     "info": transition.get("info"), "transition": step_transition}, hazards)
+        self.logger.step(t, action=action, transition=transition, state_before=before,
+                         state_after=state_after, perturbations=records, moves=moved,
+                         policy_info=policy_info, seen_obs=seen)
+        self.logger.trace(t, action_proposed=proposed if proposed is not None else action, action=action,
+                          hazards=hazards, env_events=transition.get("events", []), **self.plugins.trace())
         self.raw = transition["obs"]
         for event in transition.get("events", []):
             self.events.append({"t": t, "event": event})
@@ -235,6 +260,8 @@ class _Episode:
 
 def _model_episode(episode, model, seed, inputs, max_steps, stop_on_terminate, policy_first=False):
     env_inputs = {key: value for key, value in inputs.items() if key != "instruction"}
+    episode.model = model
+    episode.learns = "learn" in (getattr(model, "probes", ()) or ()) and callable(getattr(model, "learn", None))
     if policy_first:                   # the official loop seeds the policy before resetting the simulator
         model.reset(seed)
     episode.raw = episode.env.reset(seed, env_inputs)

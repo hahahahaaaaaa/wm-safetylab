@@ -20,6 +20,7 @@ class ImagePerturbation(Plugin):
     For compatibility its random stream is seeded with the episode seed itself, as before.
     """
     stage, role = "S1", "fault"
+    neutral = {"schedule": []}
 
     def __init__(self, config):
         super().__init__(config)
@@ -45,6 +46,7 @@ class TargetMoves(Plugin):
                      {"step": 10, "goal": {"xyz": [...]}}]   (the kernel's normalised form)
     """
     stage, role = "ENV", "fault"
+    neutral = {"moves": []}
 
     def __init__(self, config):
         super().__init__(config)

@@ -1,12 +1,12 @@
 {
   "environments": {
-    "simpler-bridge-carrot": {"entrypoint": "wms.scenarios.simpler.env:SimplerBridgeEnv", "capabilities": ["image_box", "set_object_pose", "set_goal", "hazards"],
+    "simpler-bridge-carrot": {"entrypoint": "wms.scenarios.simpler.env:SimplerBridgeEnv", "capabilities": ["image_box", "set_object_pose", "set_goal", "hazards", "rgb", "reward"],
                               "config": {"task": "carrot", "runtime_config": "$runtime.config_file"}},
-    "simpler-bridge-spoon": {"entrypoint": "wms.scenarios.simpler.env:SimplerBridgeEnv", "capabilities": ["image_box", "set_object_pose", "set_goal", "hazards"],
+    "simpler-bridge-spoon": {"entrypoint": "wms.scenarios.simpler.env:SimplerBridgeEnv", "capabilities": ["image_box", "set_object_pose", "set_goal", "hazards", "rgb", "reward"],
                              "config": {"task": "spoon", "runtime_config": "$runtime.config_file"}},
-    "simpler-bridge-cube": {"entrypoint": "wms.scenarios.simpler.env:SimplerBridgeEnv", "capabilities": ["image_box", "set_object_pose", "set_goal", "hazards"],
+    "simpler-bridge-cube": {"entrypoint": "wms.scenarios.simpler.env:SimplerBridgeEnv", "capabilities": ["image_box", "set_object_pose", "set_goal", "hazards", "rgb", "reward"],
                             "config": {"task": "cube", "runtime_config": "$runtime.config_file"}},
-    "simpler-bridge-eggplant": {"entrypoint": "wms.scenarios.simpler.env:SimplerBridgeEnv", "capabilities": ["image_box", "set_object_pose", "set_goal", "hazards"],
+    "simpler-bridge-eggplant": {"entrypoint": "wms.scenarios.simpler.env:SimplerBridgeEnv", "capabilities": ["image_box", "set_object_pose", "set_goal", "hazards", "rgb", "reward"],
                                 "config": {"task": "eggplant", "runtime_config": "$runtime.config_file"}}
   },
   "recipes": {

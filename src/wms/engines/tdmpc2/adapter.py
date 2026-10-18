@@ -8,9 +8,12 @@ Model probes (for S2-S4 plugins, through set_hooks; numpy arrays, float32):
            the encoded observation, and MPPI's warm start carried over from the previous step
   predict  on_prediction(z_next (N, latent_dim), {"kind": "rollout"}) for every latent dynamics step
            inside planning (policy-prior rollouts and MPPI value estimates alike); after the choice,
-           on_prediction(z_next (latent_dim,), {"kind": "chosen_next"}) for the executed action (a report)
+           on_prediction(z_next (latent_dim,), {"kind": "chosen_next"}) for the executed action (a report;
+           also made when only the kernel wants it, for transition["predicted_next"])
   plan     on_plan({"candidates": (N, horizon, action_dim), "scores": (N,)}, {"iteration": i, "iterations": n})
            once per MPPI iteration; returned scores replace the value estimates (re-ranking)
+  embed    embed(obs) -> model.encode(obs) (latent_dim,): an observation in the space of the
+           predictions (transition["next_state"]); no gradient, no random draw, no policy state
 Without hooks, act() is the official call unchanged; with hooks it makes the same calls in the
 same order (encode, then plan), so plugins that return their input leave every action unchanged.
 """
@@ -18,7 +21,7 @@ from . import compat
 
 
 class ModelAdapter:
-    probes = ("state", "predict", "plan")
+    probes = ("state", "predict", "plan", "embed")
 
     def __init__(self, config):
         self.config = config
@@ -78,6 +81,14 @@ class ModelAdapter:
     def set_hooks(self, hooks):
         self.hooks = hooks
 
+    def embed(self, observation):
+        self._load(int(self.config.get("seed", 0)))
+        import torch
+        obs = torch.as_tensor(observation, dtype=torch.float32).reshape(1, -1)
+        with torch.no_grad():
+            z = self.agent.model.encode(obs.to(self.agent.device, non_blocking=True), None)
+        return z[0].cpu().numpy()
+
     def export_state(self):
         mean = getattr(self.agent, "_prev_mean_eval", None) if self.agent is not None else None
         return {"plan_mean": None if mean is None or self.first else mean[0].detach().cpu().numpy()}
@@ -117,7 +128,7 @@ class ModelAdapter:
                 finally:
                     for restore in undo:
                         restore()
-            if hooks.wants("on_prediction"):
+            if hooks.wants("chosen_next"):
                 hooks.prediction(agent.model.next(z, a, None)[0].cpu().numpy(), {"kind": "chosen_next"})
         return a.cpu()
 

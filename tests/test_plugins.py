@@ -107,6 +107,13 @@ class Feedback(Plugin):
         return transition
 
 
+class Update(Plugin):
+    stage, role, requires = "S6", "fault", ("learn",)
+
+    def on_update(self, batch, ctx):
+        return batch
+
+
 class ForgetMemory(Plugin):
     """S2 fault: clear the toy memory before every read from step `start` on."""
     stage, role, side, requires = "S2", "fault", "model", ("state",)
@@ -217,7 +224,8 @@ def test_strict_mode_catches_in_place_changes(tmp_path):
     ("PeekTruth", "declare privileged"),
     ("PrivilegedGate", "oracle"),
     ("NoCard", "threat card"),
-    ("Feedback", "round 2"),
+    ("Feedback", "must list 'learn'"),
+    ("Update", "round 2"),
 ])
 def test_contract_violations_are_refused(tmp_path, entry, message):
     code, result, _ = run(tmp_path, episodes=1, max_steps=3, plugins=[plugin(entry)])

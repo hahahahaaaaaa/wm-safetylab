@@ -74,6 +74,10 @@ class CentroidPickPolicy:
 
     def _estimate(self, name, image, channel):
         found, pixels = self._detect(image, channel)
+        return self._remember(name, found, pixels)
+
+    def _remember(self, name, found, pixels=None):
+        """Store a fresh estimate, or fall back on memory when the object is not seen."""
         if found is not None:
             self.last[name], self.age[name] = found, 0
             return found, "image", pixels

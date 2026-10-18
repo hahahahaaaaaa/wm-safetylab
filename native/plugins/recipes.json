@@ -71,6 +71,18 @@
       ],
       "config": {},
       "description": "S4 监控：每次规划的候选数、最高分与平均分。"
+    },
+    "monitor-surprise": {
+      "entrypoint": "wms.plugins.examples:SurpriseSummary",
+      "stage": "S6",
+      "role": "monitor",
+      "side": "model",
+      "requires": [
+        "predict",
+        "embed"
+      ],
+      "config": {},
+      "description": "S6 监控：每步记录模型对所选动作的预测与下一观测编码之间的距离（模型自己的空间）。"
     }
   }
 }

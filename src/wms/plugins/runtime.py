@@ -5,11 +5,30 @@ loaded, calls their hooks in a fixed order and collects what they log:
 
   per hook: fault / attack first, then defense, then monitor (list order within a role)
   per step: ENV -> S1 (frame t) -> model.act [S2, S3, S4 through the model's probes] -> S5
-            -> simulator step -> after_step
+            (then an alarm's takeover) -> simulator step -> hazards -> S6 on_feedback
+            -> model.learn (models with the learn probe) -> after_step
 
 Each plugin gets its own context (ctx): its own random stream seeded from (episode seed,
 plugin position), so plugins never draw from the global generators and adding one plugin
 does not change another's randomness; ctx.log(...) writes to the step's trace.
+
+What a hook returns is checked before it goes on: the same structure as its input (keys,
+lengths, array shapes and dtypes; S2 only the top-level keys, since forgetting may shrink a
+memory; S4 the scores' shape), and an S5 action of the same length with finite values. An
+action outside the spec's bounds is allowed (a fault may command too much; the environment
+clips it, and a later defense may clip it first).
+
+Alarms: a defense of S1-S4 or S6 calls ctx.alarm(reason, score, takeover="stop" | "fallback",
+steps=n). The alarm is logged; S5 plugins see it in ctx.alarms (alarms raised during S6 or
+after_step of step t are seen at step t+1). With takeover, the kernel takes over at the next
+action, after the S5 plugins, for n actions, unless an S5 defense already took over that step.
+
+Transitions: after the simulator step the kernel builds {"t", "obs", "action", "next_obs",
+"reward", "done", "taken_over", "predicted_next", "next_state"} (obs and next_obs as the
+environment returned them, before S1; action as executed). predicted_next (the model's
+prediction for the action it chose) and next_state (model.embed(next_obs)) are filled only
+when some plugin requires 'predict' / 'embed', and each plugin sees only the fields whose
+probe it declared (the others are None).
 """
 from __future__ import annotations
 
@@ -17,12 +36,20 @@ import copy
 
 import numpy as np
 
-from .base import ENV_ABILITIES, HOOKS, PROBES, ROLE_ORDER, metadata, problems
+from .base import (ALARM_STAGES, ENV_METHODS, HOOKS, OBSERVATION_KINDS, PROBES, ROLE_ORDER, TRANSITION_NEEDS,
+                   metadata, problems)
+from .tree import check_like
 
 
 class PluginStop(Exception):
     """A defense stopped the episode; planner executors end with this status."""
     episode_status = "plugin_stop"
+
+
+def _kind(kind):
+    if kind not in ("stop", "fallback"):
+        raise ValueError("takeover kind must be 'stop' or 'fallback'")
+    return kind
 
 
 class PluginContext:
@@ -46,6 +73,11 @@ class PluginContext:
         self._owner.events.append({"plugin": self.id, "stage": self.stage, "role": self.role,
                                    "hook": self.hook, "t": self.t, "final": self.final, "data": record})
         return record
+
+    @property
+    def alarms(self):
+        """Alarms raised since the last action (this step's S1-S4, the previous step's S6 / after_step)."""
+        return [dict(alarm) for alarm in self._owner.alarms]
 
     # -------------------------------------------------------------- privileged
     def _needs_privilege(self, what):
@@ -78,20 +110,32 @@ class PluginContext:
             raise PermissionError(f"{self.id}: only ENV plugins may touch the environment")
         return self._owner.env
 
-    # -------------------------------------------------------------- S5 takeover
+    # -------------------------------------------------------------- takeover and alarms
     def intervene(self, kind, action=None, reason=""):
         """S5 defense: 'stop' ends the episode before this action runs; 'fallback' runs `action`
         (default: spec safe_action, else zeros) instead of the policy's action."""
         if self.hook != "on_action" or self.role != "defense":
-            raise PermissionError("only an S5 defense may take over, from on_action")
-        if kind not in ("stop", "fallback"):
-            raise ValueError("kind must be 'stop' or 'fallback'")
-        if kind == "fallback" and action is None:
-            spec = self.spec or {}
-            action = spec.get("safe_action") or [0.0] * int(spec.get("action_dim", 0))
-        self._owner.takeover = {"kind": kind, "plugin": self.id, "reason": reason,
-                                "action": None if action is None else np.asarray(action, dtype=float).tolist()}
+            raise PermissionError("only an S5 defense may take over, from on_action; "
+                                  "other defenses raise ctx.alarm(..., takeover=...)")
+        self._owner.takeover = {"kind": _kind(kind), "plugin": self.id, "reason": reason,
+                                "action": self._owner.fallback_action(kind, action)}
         return self._owner.takeover
+
+    def alarm(self, reason, score=None, takeover=None, steps=1, action=None):
+        """A defense outside S5 reports a problem. With takeover ("stop" | "fallback") the kernel takes
+        over at the next action, for `steps` actions (fallback runs `action`, default as intervene)."""
+        if self.role != "defense" or self.stage not in ALARM_STAGES:
+            raise PermissionError(f"only defenses of {list(ALARM_STAGES)} raise alarms "
+                                  "(an S5 defense takes over itself with ctx.intervene; a monitor logs)")
+        if takeover is not None:
+            _kind(takeover)
+            if int(steps) < 1:
+                raise ValueError("steps must be >= 1")
+        record = {"plugin": self.id, "stage": self.stage, "t": self.t, "hook": self.hook, "reason": str(reason),
+                  "score": None if score is None else float(score), "takeover": takeover,
+                  "steps": int(steps) if takeover else None}
+        self._owner.raise_alarm(record, action)
+        return record
 
 
 class _Item:
@@ -132,6 +176,13 @@ def _same(a, b):
     return a == b
 
 
+def _is_vector(obs):
+    if not isinstance(obs, (list, tuple, np.ndarray)):
+        return False
+    flat = np.asarray(obs, dtype=object)
+    return flat.ndim == 1 and all(isinstance(v, (int, float, np.integer, np.floating)) for v in flat.tolist())
+
+
 class ModelHooks:
     """Given to model.set_hooks(): the model calls these at the matching point inside act()."""
 
@@ -142,12 +193,18 @@ class ModelHooks:
         return self._owner.call("on_state", value, phase=phase, meta=meta)
 
     def prediction(self, value, meta=None):
+        if (meta or {}).get("kind") == "chosen_next":
+            self._owner.predicted_next = _snapshot(value)
         return self._owner.call("on_prediction", value, meta=meta)
 
     def plan(self, value, meta=None):
         return self._owner.call("on_plan", value, meta=meta)
 
     def wants(self, hook):
+        """Whether to offer a hook. "chosen_next": the kernel wants the predicted next latent for the
+        chosen action (transition["predicted_next"]) even when no plugin watches on_prediction."""
+        if hook == "chosen_next":
+            return self._owner.needs["predicted_next"] or bool(self._owner.by_hook.get("on_prediction"))
         return bool(self._owner.by_hook.get(hook))
 
 
@@ -165,8 +222,14 @@ class PluginSet:
             items.sort(key=lambda item: (ROLE_ORDER[item.role], item.index))
         self.env = self.model = None
         self.spec, self.hazards, self.events, self.takeover = {}, [], [], None
+        self.alarms, self.carry, self.pending = [], [], None
+        self.predicted_next = None
         self.ran = {}
         self.t = 0
+        required = {need for item in self.items for need in item.requires}
+        self.needs = {field: probe in required for field, probe in TRANSITION_NEEDS.items()}
+        self.kinds = required & set(OBSERVATION_KINDS + ("reward",))
+        self.observation_checked = False
 
     def __bool__(self):
         return bool(self.items)
@@ -192,21 +255,44 @@ class PluginSet:
                 errors.append(f"{item.id}: privileged defense needs config.oracle = true")
             for need in item.requires:
                 if need in PROBES:
+                    method = need if need in ("embed", "learn") else "set_hooks"
                     if executor != "model":
                         errors.append(f"{item.id} needs model probe '{need}', but executor {executor!r} has no model")
-                    elif need not in probes or not callable(getattr(model, "set_hooks", None)):
+                    elif need not in probes or not callable(getattr(model, method, None)):
                         errors.append(f"{item.id} needs model probe '{need}'; this model offers {list(probes)}")
-                elif need in ENV_ABILITIES and not callable(getattr(env, need, None)):
+                elif need in ENV_METHODS and not callable(getattr(env, need, None)):
                     errors.append(f"{item.id} needs environment method {need}()")
         if errors:
             raise TypeError("Plugin check failed:\n  " + "\n  ".join(errors))
         self.env, self.model = env, model
-        if model is not None and any(self.has(h) for h in ("on_state", "on_prediction", "on_plan")):
+        if model is not None and (any(self.has(h) for h in ("on_state", "on_prediction", "on_plan"))
+                                  or self.needs["predicted_next"]):
             model.set_hooks(ModelHooks(self))
+
+    def check_observation(self, obs):
+        """rgb / vector, on the first observation (an environment's spec may not know before reset)."""
+        if self.observation_checked or not self.kinds & set(OBSERVATION_KINDS):
+            return
+        self.observation_checked = True
+        has_rgb = isinstance(obs, dict) and bool(obs.get("rgb"))
+        errors = []
+        for item in self.items:
+            if "rgb" in item.requires and not has_rgb:
+                errors.append(f"{item.id} needs camera images (rgb); this environment's observations have none")
+            if "vector" in item.requires and not _is_vector(obs):
+                errors.append(f"{item.id} needs vector observations; this environment's are not a flat vector")
+        if errors:
+            raise TypeError("Plugin check failed:\n  " + "\n  ".join(errors))
+
+    def check_reward(self, reward):
+        if "reward" in self.kinds and reward is None:
+            needers = [item.id for item in self.items if "reward" in item.requires]
+            raise TypeError(f"Plugin check failed:\n  {needers} need a reward; this environment returns none")
 
     # ------------------------------------------------------------------ episode
     def begin_episode(self, index, seed, spec):
         self.spec, self.hazards = spec or {}, []
+        self.alarms, self.carry, self.pending = [], [], None
         for item in self.items:
             ctx = item.ctx = PluginContext(self, item)
             ctx.episode, ctx.seed = index, int(seed)
@@ -216,19 +302,89 @@ class PluginSet:
 
     def begin_step(self, t):
         self.t, self.events, self.takeover, self.ran = t, [], None, {}
+        self.alarms, self.carry = self.carry, []
+        self.predicted_next = None
+
+    # ------------------------------------------------------------------ alarms
+    def fallback_action(self, kind, action):
+        if kind == "fallback" and action is None:
+            spec = self.spec or {}
+            action = spec.get("safe_action") or [0.0] * int(spec.get("action_dim", 0))
+        return None if action is None else np.asarray(action, dtype=float).tolist()
+
+    def raise_alarm(self, record, action=None):
+        late = record["hook"] in ("on_feedback", "after_step")       # raised after this step's action
+        (self.carry if late else self.alarms).append(record)
+        if not record["takeover"]:
+            return
+        wanted = {"kind": record["takeover"], "plugin": record["plugin"], "reason": record["reason"],
+                  "action": self.fallback_action(record["takeover"], action), "remaining": record["steps"],
+                  "via": "alarm", "raised_at": record["t"]}
+        current = self.pending
+        if current is None or (wanted["kind"] == "stop" and current["kind"] != "stop") or (
+                wanted["kind"] == current["kind"] and wanted["remaining"] >= current["remaining"]):
+            self.pending = wanted
+
+    def alarm_takeover(self):
+        """After the S5 chain: an alarm's pending takeover, unless an S5 defense took over already."""
+        pending = self.pending
+        if pending is None:
+            return self.takeover
+        pending["remaining"] -= 1
+        if pending["remaining"] <= 0:
+            self.pending = None
+        if not self.takeover:
+            self.takeover = {key: pending[key] for key in ("kind", "plugin", "reason", "action", "via", "raised_at")}
+        return self.takeover
+
+    # ------------------------------------------------------------------ hooks
+    def _view(self, item, transition):
+        """The transition without the fields whose probe the plugin did not declare."""
+        hidden = [field for field, probe in TRANSITION_NEEDS.items() if probe not in item.requires]
+        return ({**transition, **{field: None for field in hidden}} if hidden else transition), hidden
+
+    def _checked(self, item, hook, out, value):
+        """Refuse a returned value whose form differs from what the hook received."""
+        if out is value:
+            return out
+        if hook == "on_state":
+            same = isinstance(out, dict) and isinstance(value, dict) and set(out) == set(value)
+            problem = None if same else (f"returned {sorted(out) if isinstance(out, dict) else type(out).__name__}, "
+                                         f"expected the keys {sorted(value) if isinstance(value, dict) else type(value).__name__}")
+        elif hook == "on_plan":
+            problem = (check_like(out.get("scores"), value.get("scores"), "plan['scores']")
+                       if isinstance(out, dict) else "returned a non-dict plan")
+        elif hook == "on_instruction":
+            problem = None if isinstance(out, str) else f"returned {type(out).__name__}, expected str"
+        elif hook == "on_action":           # policies return lists or arrays; only the length matters
+            problem = None if np.shape(out) == np.shape(value) else (
+                f"returned an action of shape {np.shape(out)}, expected {np.shape(value)}")
+        else:
+            problem = check_like(out, value, hook[3:])
+        if problem is None and hook == "on_action":
+            if not np.isfinite(np.asarray(out, dtype=float)).all():
+                problem = "the action has non-finite values"
+        if problem:
+            raise TypeError(f"{item.id}.{hook}: {problem}")
+        return out
 
     def call(self, hook, value, phase=None, meta=None, final=False):
         for item in self.by_hook.get(hook, ()):
             ctx = item.ctx
             ctx.t, ctx.hook, ctx.phase, ctx.meta, ctx.final = self.t, hook, phase, meta, final
-            before = _snapshot(value) if self.strict else None
-            out = getattr(item.plugin, hook)(value, ctx)
-            if self.strict and not _same(before, value):
+            given, hidden = self._view(item, value) if hook == "on_feedback" else (value, ())
+            before = _snapshot(given) if self.strict else None
+            out = getattr(item.plugin, hook)(given, ctx)
+            if self.strict and not _same(before, given):
                 raise RuntimeError(f"{item.id}.{hook} changed its input in place; return a new value instead")
             if item.role != "monitor":
                 if out is None:
                     raise TypeError(f"{item.id}.{hook} returned None; return the (possibly changed) value")
-                value = out
+                if out is given:
+                    out = value
+                elif hidden and isinstance(out, dict):
+                    out = {**out, **{field: value[field] for field in hidden}}
+                value = self._checked(item, hook, out, value)
             self.ran.setdefault(item.stage, []).append(item.id)
             if self.takeover and self.takeover.get("kind") == "stop" and hook == "on_action":
                 break
@@ -248,6 +404,11 @@ class PluginSet:
                 if event["stage"] == stage and event["hook"] == hook and event["role"] in ("fault", "attack")
                 and not event["final"]]
 
+    def feedback(self, transition, hazards):
+        """S6 on_feedback chain; returns the transition a learning model learns from."""
+        self.hazards = list(hazards or [])
+        return self.call("on_feedback", transition) if self.has("on_feedback") else transition
+
     def after_step(self, step, hazards):
         self.hazards = list(hazards or [])
         for item in self.items:
@@ -255,7 +416,10 @@ class PluginSet:
             if callable(function):
                 ctx = item.ctx
                 ctx.t, ctx.hook, ctx.phase, ctx.meta, ctx.final = self.t, "after_step", None, None, False
-                function(step, ctx)
+                given = step
+                if step.get("transition") is not None:
+                    given = {**step, "transition": self._view(item, step["transition"])[0]}
+                function(given, ctx)
 
     def end_episode(self):
         out = {}
@@ -269,7 +433,11 @@ class PluginSet:
         return out
 
     def trace(self):
-        return {"plugins": self.ran, "events": [e for e in self.events if not e["final"]], "takeover": self.takeover}
+        row = {"plugins": self.ran, "events": [e for e in self.events if not e["final"]], "takeover": self.takeover}
+        alarms = [alarm for alarm in self.alarms + self.carry if alarm["t"] == self.t]   # raised this step
+        if alarms:
+            row["alarms"] = alarms
+        return row
 
     def close(self):
         errors = []

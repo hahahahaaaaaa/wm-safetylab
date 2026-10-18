@@ -14,6 +14,7 @@ class ActionScale(Plugin):
     config: scale (default 0.5), dims (default: all), start / end steps (default: whole episode)
     """
     stage, role = "S5", "fault"
+    neutral = {"scale": 1.0}
 
     def on_action(self, action, ctx):
         start, end = int(self.config.get("start", 0)), self.config.get("end")
@@ -105,3 +106,31 @@ class PlanSummary(Plugin):
         ctx.log(candidates=int(scores.size), best=float(finite.max()) if finite.size else None,
                 mean=float(finite.mean()) if finite.size else None, meta=dict(ctx.meta or {}))
         return plan
+
+
+class SurpriseSummary(Plugin):
+    """S6 monitor: per step, how far the model's prediction for its chosen action was from what it
+    then saw (|predicted_next - embed(next_obs)|, in the model's own space); end_episode the mean
+    and max. A starting point for surprise detectors; thresholds must come from clean runs."""
+    stage, role, side, requires = "S6", "monitor", "model", ("predict", "embed")
+
+    def reset(self, episode, ctx):
+        self.values = []
+
+    def on_feedback(self, transition, ctx):
+        import numpy as np
+        predicted, actual = transition["predicted_next"], transition["next_state"]
+        if predicted is None or actual is None:
+            return transition
+        gap = np.asarray(predicted, dtype=float).reshape(-1) - np.asarray(actual, dtype=float).reshape(-1)
+        gap = gap[np.isfinite(gap)]
+        value = float(np.linalg.norm(gap)) if gap.size else None
+        if value is not None:
+            self.values.append(value)
+        ctx.log(surprise=value, taken_over=bool(transition["taken_over"]))
+        return transition
+
+    def end_episode(self, ctx):
+        if not self.values:
+            return {"steps": 0}
+        return {"steps": len(self.values), "mean": sum(self.values) / len(self.values), "max": max(self.values)}
