@@ -105,7 +105,7 @@
 | 玩具 `toy-centroid` / `toy-centroid-memory` | state | `{"cube": [x, y] 或 None, "goal": ..., "age": {...}}` |
 | 玩具 `toy-planner` | state、predict、plan、embed | state：`{"latent": (7,), "memory", "plan_mean"}`；predict：`(N, 7)` 或 `(7,)`；plan：`candidates (N, H, 2)`、`predicted (N, H, 7)`、`scores (N,)`；embed：`(7,)`，看不见的物体为 NaN |
 | 玩具 `toy-planner-online` | 以上加 learn | 同上；动作增益从 transition 在线拟合（初值为真值一半），state 另有 `gain` |
-| TD-MPC2 `tdmpc2-pushcube` | state、predict、plan、embed | state：`{"latent": (512,), "plan_mean": (H, A) 或 None}`；predict：`(N, 512)`；plan：每轮 MPPI 一次，`candidates (N, H, A)`、`scores (N,)`；embed：`model.encode(obs)` `(512,)`。均为 float32 numpy |
+| TD-MPC2 `tdmpc2-pushcube` | state、predict、plan、embed | state：`{"latent": (512,), "plan_mean": (H, A) 或 None}`，把 `plan_mean` 换成 `None` 即清空热启动、本步按回合第一步规划；predict：`(N, 512)`，`ctx.meta` 含 `h`（推演第几步）和 `source`（`"prior"` 策略先验推演 / `"value"` 每轮 MPPI 的价值估计）；plan：每轮 MPPI 一次，`candidates (N, H, A)`、`scores (N,)`；embed：`model.encode(obs)` `(512,)`。均为 float32 numpy |
 | MemoryVLA `memoryvla-bridge` | state | `{"timestep", "cognitive": [(t, tensor)], "perceptual": [...]}`，GPU 上的 bf16 torch 张量，返回新列表，不要原地改张量 |
 | OpenVLA `openvla-bridge` | 无 | 只能挂 ENV、S1、S5 |
 
@@ -116,6 +116,40 @@
 ## 一致性测试查什么
 
 `wms plugin test` 在每一个满足 `requires` 的玩具组合上各跑一遍：`toy-centroid-memory + toy-pick`、`toy-planner + toy-pick`、`toy-planner + toy-pick-vector`、`toy-planner-online + toy-pick`。在每个组合上检查：能跑完（严格模式，返回值形式正确）、钩子被调用、同种子两次逐字节一致、没动全局随机状态；监控不改动作；故障 / 攻击 / 防御的 `neutral` 配置等于不挂插件，并报告改变了多少步动作。卡上写"任意模型"的插件必须在所有组合上通过。
+
+## 强度和阈值从哪里来
+
+不要把阈值写死在插件里。用干净运行（不挂故障和攻击）算统计量，再通过 `config` 传给插件：
+
+```bash
+python -m wms.episodes.clean_stats <运行输出目录> [...] --output stats.json
+```
+
+得到的统计量包括：
+- 向量观测和动作各维的均值、标准差。
+- 动作幅度和相邻两步动作差的分位数。
+- 图像各通道的均值、标准差，以及相邻帧差的分位数。
+- 挂了 `monitor-latent-moments` 时，latent 各维的均值、标准差。
+- 监控插件记下的数值（例如 `monitor-surprise` 的 `surprise`）的分位数。
+
+检测器"误报 ≤ 1%"的阈值就取对应量的 99% 分位数。服务器上已算好的两份见计划文档。危险谓词的阈值用 `python -m wms.scenarios.hazard_calibration` 标定。
+
+## 在服务器上验收
+
+GPU 服务器上不经过服务、直接跑配方：
+
+```bash
+python scripts/run_direct.py <配方> <运行编号> [键=JSON ...] [--registry 你的目录/registry.json]
+python scripts/run_direct.py tdmpc2-pushcube-episode run_a01 params.episodes=50     'params.plugins=[{"plugin": "a-obs-corruption", "config": {"severity": 3}}]' --registry ~/a/registry.json
+python scripts/compare_runs.py <基线运行> <插件运行>
+```
+
+`compare_runs.py` 按回合配对，输出：
+- 动作最大差。
+- 成功数，以及成功率差值和 95% 置信区间。
+- 两边的危险步数和接管次数。
+
+不挂插件或只挂监控的运行，与基线比动作差必须为 0。开跑前先用 `nvidia-smi` 看 GPU 是否空闲：这个脚本不经过服务的排队。
 
 ## 输出在哪里
 

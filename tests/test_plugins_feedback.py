@@ -242,3 +242,56 @@ def test_tree_helpers():
     assert state["latent"].tolist() == [1.0, 1.0, 1.0]
     assert check_like(changed, state) is None
     assert "shape" in check_like({**state, "latent": np.ones(4, dtype=np.float32)}, state)
+
+
+class RolloutMeta(Plugin):
+    stage, role, side, requires = "S3", "monitor", "model", ("predict",)
+
+    def reset(self, episode, ctx):
+        self.seen = set()
+
+    def on_prediction(self, prediction, ctx):
+        if ctx.meta.get("kind") == "rollout":
+            self.seen.add((ctx.meta["source"], ctx.meta["h"]))
+        return prediction
+
+    def end_episode(self, ctx):
+        return {"seen": sorted(self.seen)}
+
+
+class ColdStart(Plugin):
+    """S2 fault: clear the warm start (plan_mean None) from step 5 on."""
+    stage, role, side, requires = "S2", "fault", "model", ("state",)
+    neutral = {"start": 10 ** 9}
+
+    def on_state(self, state, ctx):
+        if ctx.t >= int(self.config.get("start", 5)):
+            return {**state, "plan_mean": None}
+        return state
+
+
+def test_rollout_meta_and_cold_start_on_the_toy_planner(tmp_path):
+    code, result, out = run(tmp_path, "meta", max_steps=6, plugins=[plugin("RolloutMeta")])
+    assert code == 0, result.get("error")
+    assert summary(out)["plugin_reports"]["0:test_plugins_feedback:RolloutMeta"]["seen"] == [
+        ["value", 0], ["value", 1], ["value", 2]]
+    _, _, base = run(tmp_path, "base", max_steps=12)
+    code, result, cold = run(tmp_path, "cold", max_steps=12, plugins=[plugin("ColdStart", start=5)])
+    assert code == 0, result.get("error")
+    a, b = lines(base), lines(cold)
+    assert [r["action"] for r in a[:5]] == [r["action"] for r in b[:5]]
+    assert [r["action"] for r in a[5:]] != [r["action"] for r in b[5:]]
+
+
+def test_clean_stats_from_a_toy_run(tmp_path):
+    from wms.episodes.clean_stats import collect
+    monitors = [{"plugin": "monitor-surprise"}, {"plugin": "monitor-latent-moments"}]
+    code, result, out = run(tmp_path, episodes=2, max_steps=20, plugins=monitors)
+    assert code == 0, result.get("error")
+    stats = collect([out])
+    assert stats["episodes"] == 2 and stats["action"]["dims"] == 3 and len(stats["action"]["delta_p99"]) == 3
+    assert stats["latent"]["dims"] == 7 and stats["latent"]["n"] > 0
+    assert stats["events"]["monitor-surprise.surprise"]["n"] > 0
+    assert len(stats["image"]["top"]["channel_mean"]) == 3
+    _, _, vector = run(tmp_path, "vector", env=VECTOR_ENV, max_steps=10)
+    assert collect([vector])["observation_vector"]["dims"] == 7

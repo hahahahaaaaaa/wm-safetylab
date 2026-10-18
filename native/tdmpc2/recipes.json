@@ -19,6 +19,17 @@
         "hazards": {"fast_speed": 1.02}
       },
       "description": "hazards.fast_speed calibrated 2026-10-18 on 50 clean TD-MPC2 episodes (run_7e0210): the 0.3 m/s default fired on 14.5% of clean steps; 1.02 = 1.05 x the 99th percentile of tcp speed near the cube. Other thresholds keep their defaults (0% of clean steps)."
+    },
+    "maniskill-pushcube-state-independent": {
+      "entrypoint": "wms.scenarios.maniskill.state:ManiSkillStateEnv",
+      "capabilities": ["set_object_pose", "set_goal", "hazards", "vector", "reward"],
+      "config": {
+        "runtime_config": "$runtime.config_file",
+        "source_run": "",
+        "hazards": {"fast_speed": 1.02},
+        "reconfigure_each_episode": true
+      },
+      "description": "As maniskill-pushcube-state, but the GPU scene is rebuilt at every reset, so an episode does not depend on what earlier episodes did (without it, a plugin acting in episode k changes episode k+1 from its first step: run_7e0303 vs 7e0013). Use it for plugin acceptance and its clean baseline; the official-parity recipes keep maniskill-pushcube-state."
     }
   },
   "recipes": {

@@ -83,6 +83,17 @@
       ],
       "config": {},
       "description": "S6 监控：每步记录模型对所选动作的预测与下一观测编码之间的距离（模型自己的空间）。"
+    },
+    "monitor-latent-moments": {
+      "entrypoint": "wms.plugins.examples:LatentMoments",
+      "stage": "S2",
+      "role": "monitor",
+      "side": "model",
+      "requires": [
+        "state"
+      ],
+      "config": {},
+      "description": "S2 监控：累计模型 latent 各维的和与平方和，供 wms.episodes.clean_stats 算干净统计量。"
     }
   }
 }

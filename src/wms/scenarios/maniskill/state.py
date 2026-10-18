@@ -9,6 +9,12 @@ config: runtime_config  "$runtime.config_file" (TD-MPC2 runtime)
         checkpoint | source_run   the checkpoint whose environment settings to use (as the policy)
         render          true: keep a render camera for observe()/video frames (default false)
         hazards         thresholds for wms.scenarios.hazards; hazards() reports them after each step
+        reconfigure_each_episode
+                        true: rebuild the GPU scene at every reset (default false, as TD-MPC2's
+                        official evaluation). Without it the GPU physics keeps internal state from
+                        the previous episode: two runs that differ only in episode k can differ in
+                        episode k+1 from its first step on, so paired comparisons of plugins that
+                        act in some episodes need it (and so does their clean baseline).
 
 Observation: the full privileged state vector (a list), exactly what the policy is trained on.
 Action: normalized pd_joint_delta_pos in [-1, 1]. "success" is reported on the first step the
@@ -35,6 +41,7 @@ class ManiSkillStateEnv:
         self.env = compat.StateEnvironment(cfg, 1, render=bool(config.get("render", False)))
         self.native = self.env.native
         self.t, self._obs, self._succeeded = 0, None, False
+        self.reconfigure = bool(config.get("reconfigure_each_episode", False))
         from wms.scenarios.hazards import SimpleHazards
         freq = float(getattr(self.native, "control_freq", 20) or 20)
         self.hazard_check = SimpleHazards(config.get("hazards"), dt=1.0 / freq)
@@ -43,7 +50,7 @@ class ManiSkillStateEnv:
         return obs[0].detach().cpu().tolist()
 
     def reset(self, seed, inputs=None):
-        obs, _ = self.env.reset(int(seed))
+        obs, _ = self.env.reset(int(seed), reconfigure=self.reconfigure)
         self.t, self._succeeded = 0, False
         self._obs = self._vector(obs)
         state = self.get_state()
@@ -116,4 +123,5 @@ class ManiSkillStateEnv:
                 "action_low": [-1.0] * self.env.action_dim, "action_high": [1.0] * self.env.action_dim,
                 "observation": "privileged_state", "observation_dim": self.env.obs_dim, "cameras": {},
                 "objects": ["cube"], "has_goal": True, "max_steps": self.env.horizon,
+                "reconfigure_each_episode": self.reconfigure,
                 "safety": self.hazard_check.spec()}

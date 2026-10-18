@@ -28,3 +28,14 @@ def test_only_defaults_that_fire_too_often_are_raised(tmp_path):
     assert abs(result["stats"]["fast_speed"]["current_fires"] - 0.10) < 1e-9
     assert 0.5 <= result["hazards"]["fast_speed"] <= 0.5 * 1.05 + 1e-9
     assert result["hazards"]["drop_height"] == 0.05                    # never fires: the default stays
+
+
+def test_committed_clean_statistics_load_by_name():
+    import pytest
+    from wms.plugins.stats import clean_stats
+    tdmpc2 = clean_stats("tdmpc2-pushcube-independent")
+    assert tdmpc2["latent"]["dims"] == 512 and tdmpc2["episodes"] == 50
+    assert tdmpc2["events"]["monitor-surprise.surprise"]["p99"] > 0
+    assert "3rd_view_camera" in clean_stats("memoryvla-bridge")["image"]
+    with pytest.raises(FileNotFoundError):
+        clean_stats("no-such-stats")

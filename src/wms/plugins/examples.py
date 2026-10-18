@@ -80,18 +80,22 @@ class StateSummary(Plugin):
 
 
 class PredictionSummary(Plugin):
-    """S3 monitor: count rollout predictions per step; log the chosen next prediction's summary."""
+    """S3 monitor: count rollout predictions per step (and the deepest imagined step h per source);
+    log the chosen next prediction's summary."""
     stage, role, side, requires = "S3", "monitor", "model", ("predict",)
 
     def reset(self, episode, ctx):
-        self.count, self.step = 0, None
+        self.count, self.depth = 0, {}
 
     def on_prediction(self, prediction, ctx):
         if ctx.meta.get("kind") == "chosen_next":
-            ctx.log(kind="chosen_next", rollout_predictions=self.count, prediction=summarise(prediction))
-            self.count = 0
+            ctx.log(kind="chosen_next", rollout_predictions=self.count, deepest_h=dict(self.depth),
+                    prediction=summarise(prediction))
+            self.count, self.depth = 0, {}
         else:
             self.count += 1
+            source = str(ctx.meta.get("source", "rollout"))
+            self.depth[source] = max(self.depth.get(source, -1), int(ctx.meta.get("h", -1)))
         return prediction
 
 
@@ -134,3 +138,32 @@ class SurpriseSummary(Plugin):
         if not self.values:
             return {"steps": 0}
         return {"steps": len(self.values), "mean": sum(self.values) / len(self.values), "max": max(self.values)}
+
+
+class LatentMoments(Plugin):
+    """S2 monitor: per-dimension sums of the model's latent (state["latent"]) at each read, for clean
+    statistics (python -m wms.episodes.clean_stats turns them into per-dimension mean and std).
+    Models whose state has no "latent" (MemoryVLA's memory banks) report nothing."""
+    stage, role, side, requires = "S2", "monitor", "model", ("state",)
+
+    def reset(self, episode, ctx):
+        self.n, self.sum, self.sumsq = 0, None, None
+
+    def on_state(self, state, ctx):
+        import numpy as np
+        if ctx.phase != "read" or not isinstance(state, dict) or state.get("latent") is None:
+            return state
+        latent = np.asarray(state["latent"], dtype=float).reshape(-1)
+        if not np.isfinite(latent).all():
+            return state
+        if self.sum is None:
+            self.sum, self.sumsq = np.zeros_like(latent), np.zeros_like(latent)
+        self.n += 1
+        self.sum += latent
+        self.sumsq += latent ** 2
+        return state
+
+    def end_episode(self, ctx):
+        if not self.n:
+            return {}
+        return {"latent_n": self.n, "latent_sum": self.sum.tolist(), "latent_sumsq": self.sumsq.tolist()}

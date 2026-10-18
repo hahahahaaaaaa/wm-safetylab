@@ -12,7 +12,8 @@ Each step:
                on_state ("read") before planning.
   2. predict   the model: gripper += move * step_size (clipped to the unit square); a held cube
                moves with the gripper. Every rollout step of every candidate is offered to
-               on_prediction (meta {"kind": "rollout", "h": h}, value (N, 7)); after the choice,
+               on_prediction (meta {"kind": "rollout", "h": h, "source": "value"}, value (N, 7)), as
+               TD-MPC2's value-estimate rollouts; after the choice,
                the predicted next latent for the chosen move is offered as {"kind": "chosen_next"}
                (a report: monitors compare it with the next step's state).
   3. plan      N candidate move sequences of H steps (the straight line to the target, plus
@@ -74,8 +75,9 @@ class ToyPlannerPolicy:
     def import_state(self, state):
         if "memory" in state:
             self.eyes.import_state(state["memory"])
-        if "plan_mean" in state:
-            self.mean = np.asarray(state["plan_mean"], dtype=float).reshape(self.horizon, 2)
+        if "plan_mean" in state:                 # None clears the warm start (as TD-MPC2)
+            mean = state["plan_mean"]
+            self.mean = np.zeros((self.horizon, 2)) if mean is None else np.asarray(mean, dtype=float).reshape(self.horizon, 2)
 
     # ------------------------------------------------------------ world model
     def move_gain(self):
@@ -141,7 +143,7 @@ class ToyPlannerPolicy:
         rollout = np.repeat(z[None], n, axis=0)
         predicted = np.empty((n, h, len(LATENT)))
         for step in range(h):
-            rollout = self._hook("prediction", self.predict(rollout, candidates[:, step]), {"kind": "rollout", "h": step})
+            rollout = self._hook("prediction", self.predict(rollout, candidates[:, step]), {"kind": "rollout", "h": step, "source": "value"})
             predicted[:, step] = rollout
         reach = np.linalg.norm(predicted[:, :, 0:2] - target, axis=2)
         scores = -reach[:, -1] - 0.1 * reach.mean(axis=1)
