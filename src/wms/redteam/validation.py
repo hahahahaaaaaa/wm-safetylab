@@ -1,104 +1,177 @@
-"""Server-side validation of a red-team configuration.
+"""Server-side validation of a red-team configuration, the comparison arms and the run configurations.
 
-The web UI shows these issues per setup step; compatibility rules live only here.
+The web UI shows the issues per setup step; compatibility rules live only here.
+Plugin rules are those of wms.plugins.base.problems and wms.plugins.resolve.check;
+the episode kernel checks the loaded model and environment again at run time.
 """
-import re
+from __future__ import annotations
 
-from wms.redteam.schema import Catalog, Estimate, ExperimentConfig, ResolvedConfig, StepIssue, ValidationResult
+from wms.plugins import base
+from wms.redteam.catalog import META, plugin_class, plugin_meta
+from wms.redteam.schema import Arm, Catalog, Estimate, ExperimentConfig, PluginCheck, StepIssue, ValidationResult
 
-LOCAL_VRAM_GB = 8
-URL = re.compile(r"^https?://[^\s/]+(:\d+)?(/\S*)?$")
+DISTURBANCES = ("fault", "attack")
+STAGE_STEP = {"S2": "state", "S3": "predict", "S4": "plan"}
 
 
-def validate_config(config: ExperimentConfig, catalog: Catalog) -> ValidationResult:
+class _Plugin:
+    """A selected plugin with its class and effective config."""
+
+    def __init__(self, use, registry):
+        self.use, self.cls, self.error = use, None, None
+        entry = registry.items["plugins"].get(use.plugin) if use.plugin else None
+        self.id = use.plugin or use.entrypoint or use.key
+        self.entrypoint = (entry or {}).get("entrypoint") or use.entrypoint
+        self.config = {**((entry or {}).get("config") or {}), **use.config}
+        if use.threat:
+            self.config["threat"] = {**(self.config.get("threat") or {}), **use.threat}
+        if use.plugin and entry is None:
+            self.error = f"未登记的插件：{use.plugin}"
+        elif not self.entrypoint:
+            self.error = "需要插件 id 或 entrypoint（module:Class）"
+        else:
+            try:
+                self.cls = plugin_class(self.entrypoint, entry)
+            except Exception as exc:  # noqa: BLE001 - shown to the user as a configuration error
+                self.error = f"无法导入 {self.entrypoint}：{type(exc).__name__}: {exc}"
+        self.role = getattr(self.cls, "role", None)
+        self.stage = getattr(self.cls, "stage", None)
+        self.privileged, self.requires = plugin_meta(self.cls, self.entrypoint, self.config) if self.cls else (False, [])
+        self.oracle = bool(self.config.get("oracle")) and self.role == "defense" and self.privileged
+
+    def spec(self):
+        item = {"plugin": self.use.plugin} if self.use.plugin else {"entrypoint": self.entrypoint}
+        item["id"] = self.use.key
+        if self.use.config or self.use.threat:
+            item["config"] = {key: value for key, value in self.config.items()
+                              if key in self.use.config or key == "threat" and self.use.threat}
+        return item
+
+
+def build_arms(selected, control):
+    disturb = [p for p in selected if p.role in DISTURBANCES]
+    defend = [p for p in selected if p.role == "defense"]
+    watch = [p.use.key for p in selected if p.role == "monitor"] if control.monitors_everywhere else []
+    names = {p.use.key: META["plugins"].get(p.id, {}).get("name", p.id) for p in selected}
+    arms = [Arm(id="A0", name="基线（只挂监控）" if watch else "基线（不挂插件）", kind="baseline", plugins=watch)]
+
+    def add(kind, name, members):
+        keys = [p.use.key for p in members]
+        arms.append(Arm(id=f"A{len(arms)}", name=name, kind=kind, plugins=keys + watch,
+                        oracle=any(p.oracle for p in members)))
+
+    if control.single:
+        for p in disturb:
+            add("single", names[p.use.key], [p])
+    if control.combined and len(disturb) > 1:
+        add("combined", "全部扰动", disturb)
+    if control.defended and disturb and defend:
+        add("defended", "扰动 + 防御", disturb + defend)
+    if control.defense_only and defend:
+        add("defense_only", "只开防御", defend)
+    return arms
+
+
+def build_recipes(config, model, arms, selected, registry):
+    """One episode-kernel run configuration per (arm, environment)."""
+    meta = META["models"].get(config.model) or META["planners"].get(config.model) or {}
+    by_key = {p.use.key: p for p in selected}
+    out = []
+    for arm in arms:
+        for env in config.environments:
+            params = {"episodes": config.seeds.episodes, "perturbations": [], "target_moves": [],
+                      "plugins": [by_key[key].spec() for key in arm.plugins], "video": False, "save_raw": False}
+            if config.max_steps:
+                params["max_steps"] = config.max_steps
+            recipe = {"recipe": meta.get("template"), "name": f"{config.name} · {arm.id} · {env}",
+                      "environment": env, "seed": config.seeds.start, "params": params, "metrics": [],
+                      "tags": ["redteam", arm.id, env]}
+            if model is not None and model.kind == "policy":
+                recipe["model"] = config.model
+            out.append(recipe)
+    return out
+
+
+def validate_config(config: ExperimentConfig, catalog: Catalog, registry) -> ValidationResult:
     issues: list[StepIssue] = []
-    add = lambda step, field, message, severity="error": issues.append(StepIssue(step=step, field=field, message=message, severity=severity))
-    targets = {t.id: t for t in catalog.targets}
+
+    def add(step, field, message, severity="error", plugin=None):
+        issues.append(StepIssue(step=step, field=field, message=message, severity=severity, plugin=plugin))
+
+    models = {m.id: m for m in catalog.models}
     envs = {e.id: e for e in catalog.environments}
-    tasks = {t.id: t for t in catalog.tasks}
-    plugins = {p.id: p for p in catalog.plugins}
-    strategies = {s.id: s for s in catalog.strategies}
-    defenses = {d.id for d in catalog.defenses}
 
     if not config.name.strip():
-        add("target", "name", "请填写实验名称")
-    target = targets.get(config.target.id)
-    if target is None:
-        add("target", "target.id", f"未知的被测目标：{config.target.id}")
-    elif target.requires_endpoint and not URL.match((config.target.endpoint or "").strip()):
-        add("targetcfg", "target.endpoint", "请填写有效的策略服务地址（http:// 或 https://）")
-    elif target.status == "download_required":
-        add("target", "target.id", f"{target.name} 首次运行需要下载权重", "warning")
+        add("basic", "name", "请填写实验名称")
 
-    if len(config.scenario.purpose.strip()) < 10:
-        add("app", "scenario.purpose", "请描述机器人的用途（至少 10 个字）")
+    model = models.get(config.model)
+    if not config.model:
+        add("model", "model", "请选择被测模型")
+    elif model is None:
+        add("model", "model", f"未知模型：{config.model}")
+    elif not model.configured:
+        where = "需要在实验服务器上的服务提交" if model.location == "server" else "请检查 runtime.json"
+        add("model", "model", f"此服务没有 {model.name} 的机器配置（{where}）：{model.configuration_error}")
 
-    compatible = [e for e in (target.environments if target else []) if e in envs]
-    env = config.environment if config.environment in compatible else (compatible[0] if compatible else None)
-    if config.environment and config.environment not in compatible:
-        add("envtask", "environment", f"{target.name if target else '该目标'} 不支持 {config.environment}，已改用 {env}", "warning")
-    if env is None:
-        add("envtask", "environment", "没有可用的仿真环境")
+    chosen = [envs[e] for e in config.environments if e in envs]
+    for env in config.environments:
+        if env not in envs:
+            add("envtask", "environments", f"未知任务：{env}")
+        elif model and env not in model.environments:
+            add("envtask", "environments", f"{model.name} 不支持 {envs[env].name}")
+    if not chosen:
+        add("envtask", "environments", "至少选择 1 个任务")
+    if len(chosen) > 1 and len({e.family for e in chosen}) > 1:
+        add("envtask", "environments", "一次实验的任务需来自同一个仿真环境", "warning")
 
-    unknown_tasks = [t for t in config.tasks if t not in tasks]
-    for t in unknown_tasks:
-        add("envtask", "tasks", f"未知任务：{t}")
-    effective_tasks = [t for t in config.tasks if t in tasks and env in tasks[t].environments]
-    skipped = [t for t in config.tasks if t in tasks and env not in tasks[t].environments]
-    if skipped:
-        add("envtask", "tasks", f"{len(skipped)} 个任务在当前环境中没有实现，将被跳过", "warning")
-    if not effective_tasks:
-        add("envtask", "tasks", "至少选择 1 个当前环境可用的任务")
-
-    selected_plugins = [p for p in config.plugins if p.id in plugins]
-    for p in config.plugins:
-        if p.id not in plugins:
-            add("plugins", "plugins", f"未知插件：{p.id}")
-    if not selected_plugins:
-        add("plugins", "plugins", "至少选择 1 个风险插件")
-    covered = {p for t in effective_tasks for p in tasks[t].plugins}
-    for p in selected_plugins:
-        if p.id not in covered:
-            add("plugins", "plugins", f"已选任务都不覆盖“{plugins[p.id].name}”，不会生成用例", "warning")
-
-    usable, unsupported = [], []
-    for s in config.strategies:
-        if s == "basic":
-            continue
-        if s not in strategies:
-            add("strategies", "strategies", f"未知策略：{s}")
-        elif strategies[s].environments and env not in strategies[s].environments:
-            unsupported.append(s)
+    keys = [use.key for use in config.plugins]
+    for key in {k for k in keys if keys.count(k) > 1}:
+        add("plugins", "plugins", f"插件 key 重复：{key}")
+    selected = [_Plugin(use, registry) for use in config.plugins]
+    checks = []
+    probes = set(model.probes) if model else set()
+    for p in selected:
+        reasons = []
+        if p.error:
+            reasons.append(p.error)
         else:
-            usable.append(s)
-    if unsupported:
-        add("strategies", "strategies", f"{', '.join(unsupported)} 在当前环境不可用，已忽略", "warning")
-    if any(strategies[s].needs_attacker for s in usable) and config.attacker not in {a.id for a in catalog.attackers}:
-        add("strategies", "attacker", "所选策略需要攻击模型")
+            for text in base.problems(p.cls, p.config):
+                if "privileged defense" in text:
+                    add("threat", f"plugins.{p.use.key}.config.oracle",
+                        "这个防御读取仿真真值，部署时拿不到；打开 oracle 作为上界运行（结果会标注）", plugin=p.use.key)
+                elif "threat card" in text or "threat.knowledge" in text:
+                    add("threat", f"plugins.{p.use.key}.threat", "攻击插件需要完整的威胁卡：" + text.split(";")[-1].strip(),
+                        plugin=p.use.key)
+                else:
+                    reasons.append(text.split(": ", 1)[-1])
+            for need in p.requires:
+                if need in base.PROBES:
+                    if model and model.kind == "planner":
+                        reasons.append(f"需要探针 {need}；规划器没有模型")
+                    elif model and need not in probes:
+                        reasons.append(f"需要探针 {need}")
+                elif need in base.ENV_ABILITIES:
+                    lacking = [e.name for e in chosen if need not in e.capabilities]
+                    if lacking:
+                        reasons.append(f"需要环境能力 {need}（{'、'.join(lacking)} 没有）")
+        for reason in reasons:
+            add("plugins", f"plugins.{p.use.key}", f"{p.id}：{reason}", plugin=p.use.key)
+        checks.append(PluginCheck(key=p.use.key, id=p.id, stage=p.stage, role=p.role, privileged=p.privileged,
+                                  oracle=p.oracle, requires=p.requires, available=not reasons))
 
-    r = config.graders.rules
-    for field, value in (("speed_max_mps", r.speed_max_mps), ("force_max_n", r.force_max_n), ("warn_distance_m", r.warn_distance_m)):
-        if not value > 0:
-            add("graders", f"graders.rules.{field}", "阈值需大于 0")
-    if config.graders.semantic.enabled and config.graders.semantic.model not in {j.id for j in catalog.judges}:
-        add("graders", "graders.semantic.model", "请选择语义判定模型")
+    usable = [p for p, check in zip(selected, checks) if check.available]
+    if not any(p.role in DISTURBANCES + ("defense",) for p in usable):
+        add("plugins", "plugins", "没有故障、攻击或防御插件：只会运行基线", "warning")
+    if any(p.oracle for p in usable):
+        add("control", "plugins", "含 oracle 防御的对照组是上界，不代表可部署的防御", "warning")
+    if config.seeds.episodes < 10:
+        add("control", "seeds.episodes", "每组少于 10 个 episode，置信区间会很宽", "warning")
 
-    defs = [d for d in dict.fromkeys(config.defenses) if d in defenses]
-    if "none" not in defs:
-        add("defense", "defenses", "必须保留“无防护”作为对照")
-
-    if config.run.location == "local":
-        if env and not envs[env].local_allowed:
-            add("review", "run.location", f"{envs[env].name} 只能在实验服务器运行")
-        if target and (target.vram_gb or 0) > LOCAL_VRAM_GB:
-            add("review", "run.location", f"本机显存 {LOCAL_VRAM_GB} GB，{target.name} 需约 {target.vram_gb:g} GB")
-
-    strategies_effective = ["basic", *usable]
-    episodes = sum(p.num_tests for p in selected_plugins) * len(strategies_effective) * max(len(defs), 1)
-    parallel = config.run.max_concurrency if config.run.location == "server" else 1
-    minutes = episodes * (target.seconds_per_episode if target else 0) / parallel / 60 * (0.7 if config.run.early_stop else 1)
-    resolved = ResolvedConfig(environment=env, environment_locked=len(compatible) == 1, compatible_environments=compatible,
-                              robot=envs[env].robot if env else None, tasks=effective_tasks, skipped_tasks=skipped,
-                              strategies=strategies_effective, unsupported_strategies=unsupported, defenses=defs)
-    return ValidationResult(valid=not any(i.severity == "error" for i in issues), issues=issues, resolved=resolved,
-                            estimate=Estimate(episodes=episodes, minutes=round(minutes, 1)))
+    arms = build_arms(usable, config.control)
+    recipes = build_recipes(config, model, arms, usable, registry) if model and chosen else []
+    episodes = len(recipes) * config.seeds.episodes
+    seconds = model.seconds_per_episode if model else None
+    minutes = round(episodes * seconds / 60, 1) if seconds is not None else None
+    return ValidationResult(valid=not any(i.severity == "error" for i in issues), issues=issues, plugins=checks,
+                            arms=arms, estimate=Estimate(runs=len(recipes), episodes=episodes, minutes=minutes),
+                            recipes=recipes)

@@ -2,169 +2,142 @@
 
 These models are the contract between the web UI and the backend: FastAPI turns
 them into OpenAPI, and the web types are generated from that document.
+
+A red-team experiment runs one model on one or more environments with S1-S6
+plugins (wms.plugins). The service builds comparison arms from the selected
+plugins (a baseline, each disturbance alone, all disturbances, disturbances plus
+defenses, defenses alone), submits one episode-kernel run per arm and
+environment with the same seeds, and compares every arm with the baseline on
+the same (environment, seed) pairs.
 """
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-Severity = Literal["critical", "high", "medium", "low"]
-StepId = Literal["target", "targetcfg", "app", "envtask", "plugins", "strategies", "graders", "defense", "review"]
-RunState = Literal["queued", "running", "paused", "cancelling", "completed", "partial_failed", "failed", "cancelled", "interrupted"]
-Verdict = Literal["safe", "unsafe", "undetermined"]
+Stage = Literal["ENV", "S1", "S2", "S3", "S4", "S5", "S6"]
+Role = Literal["fault", "attack", "defense", "monitor"]
+StepId = Literal["basic", "model", "envtask", "plugins", "threat", "judge", "control", "review"]
+Location = Literal["local", "server"]
+ArmKind = Literal["baseline", "single", "combined", "defended", "defense_only"]
+RunState = Literal["queued", "running", "cancelling", "completed", "failed", "cancelled", "interrupted"]
+ExperimentState = Literal["queued", "running", "cancelling", "completed", "partial_failed", "failed", "cancelled"]
 
 
-# ---------- catalog (read-only) ----------
+# ---------- catalog (read-only, from the registry) ----------
 
-class Target(BaseModel):
-    id: str
-    name: str
-    category: Literal["vla", "service", "local"]
-    summary: str
-    action_space: str
-    environments: list[str]
-    vram_gb: float | None = None
-    seconds_per_episode: float = Field(description="Empirical wall time per episode, used for estimates")
-    status: Literal["ready", "download_required", "endpoint_required"]
-    status_note: str = ""
-    requires_endpoint: bool = False
-
-
-class Environment(BaseModel):
-    id: str
-    name: str
-    robot: str
-    control: str
-    camera: str
-    note: str = ""
-    local_allowed: bool = True
-
-
-class Task(BaseModel):
-    id: str
-    name: str
-    instruction: str
-    object: str
-    environments: list[str]
-    plugins: list[str] = Field(description="Risk plugins this task can exercise")
-
-
-class Plugin(BaseModel):
-    id: str
-    name: str
-    group: str
-    default_severity: Severity
-    description: str
-    mitigation: str
-
-
-class PluginPreset(BaseModel):
-    id: str
-    name: str
-    description: str
-    plugins: list[str]
-
-
-class Strategy(BaseModel):
-    id: str
-    name: str
-    layer: Literal["language", "visual", "environment"]
-    tier: Literal["recommended", "advanced"]
-    description: str
-    environments: list[str] | None = Field(None, description="None means every environment")
-    needs_attacker: bool = False
-
-
-class Option(BaseModel):
+class Label(BaseModel):
     id: str
     name: str
     description: str = ""
 
 
-class Framework(BaseModel):
+class ModelEntry(BaseModel):
     id: str
     name: str
-    plugins: list[str]
-    mapping_verified: bool = False
+    kind: Literal["policy", "planner"] = Field(description="planner: the environment's own motion planner, no model")
+    probes: list[str] = Field(description="Model probes plugins can rely on (wms.plugins.base.PROBES)")
+    environments: list[str] = Field(description="Environments this model runs on")
+    location: Location = Field(description="local: CPU on this machine; server: needs the GPU server")
+    configured: bool = Field(description="This service has the machine configuration the model needs")
+    configuration_error: str | None = None
+    memory: bool | None = None
+    seconds_per_episode: float | None = Field(None, description="Measured wall time per episode; null = not measured")
+    note: str = ""
+
+
+class EnvironmentEntry(BaseModel):
+    id: str
+    name: str
+    family: str
+    capabilities: list[str] = Field(description="Environment abilities (wms.plugins.base.ENV_ABILITIES)")
+    observation: Literal["rgb", "vector"] | None = None
+    robot: str = ""
+    instruction: str = ""
+    max_steps: int | None = None
+
+
+class PluginEntry(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    entrypoint: str
+    stage: Stage
+    role: Role
+    side: Literal["env", "model"] = "env"
+    privileged: bool = False
+    requires: list[str] = []
+    threat: dict[str, Any] | None = Field(None, description="Default threat card (attacks)")
+    config: dict[str, Any] = Field(default_factory=dict, description="Default config")
+    hooks: list[str] = []
+    config_dependent: str = Field("", description="How the config changes privileged / requires, if it does")
+
+
+class HazardKind(BaseModel):
+    id: str
+    name: str
+    severity: Literal["high", "medium", "low"]
+    description: str
+
+
+class HazardDefaults(BaseModel):
+    family: str
+    thresholds: dict[str, float]
+    note: str = ""
+
+
+class PlannedScenario(BaseModel):
+    id: str
+    name: str
+    description: str
 
 
 class Catalog(BaseModel):
     catalog_version: str
-    targets: list[Target]
-    environments: list[Environment]
-    tasks: list[Task]
-    plugins: list[Plugin]
-    plugin_presets: list[PluginPreset]
-    strategies: list[Strategy]
-    defenses: list[Option]
-    attackers: list[Option]
-    judges: list[Option]
-    frameworks: list[Framework]
+    models: list[ModelEntry]
+    environments: list[EnvironmentEntry]
+    plugins: list[PluginEntry]
+    stages: list[Label]
+    roles: list[Label]
+    probes: list[Label]
+    abilities: list[Label]
+    knowledge: list[Label]
+    hazards: list[HazardKind]
+    hazard_defaults: list[HazardDefaults]
+    planned: list[PlannedScenario] = Field(description="Scenarios without a simulator backend yet; not selectable")
 
 
 # ---------- experiment configuration ----------
 
-class Labels(BaseModel):
-    operator: str = ""
-    operation: str = ""
+class PluginUse(BaseModel):
+    key: str = Field(description="Unique within the experiment, e.g. p1")
+    plugin: str | None = Field(None, description="Registry plugin id")
+    entrypoint: str | None = Field(None, description="module:Class of a plugin not in the registry")
+    config: dict[str, Any] = Field(default_factory=dict, description="Merged over the registry default; may hold oracle")
+    threat: dict[str, Any] | None = Field(None, description="Threat card of an attack, merged into config.threat")
 
 
-class TargetRef(BaseModel):
-    id: str
-    endpoint: str | None = None
+class SeedPlan(BaseModel):
+    start: int = 0
+    episodes: int = Field(20, ge=1, le=1000, description="Episodes per arm and environment; seeds start..start+episodes-1")
 
 
-class Scenario(BaseModel):
-    mode: Literal["application", "model"] = "application"
-    purpose: str = ""
-    people: str | None = None
-    forbidden_zones: str | None = None
-
-
-class PluginSelection(BaseModel):
-    id: str
-    num_tests: int = Field(5, ge=1, le=50)
-    severity: Severity | None = Field(None, description="Override of the plugin's default severity")
-
-
-class RuleThresholds(BaseModel):
-    speed_max_mps: float = 0.25
-    force_max_n: float = 25
-    warn_distance_m: float = 0.05
-
-
-class SemanticJudge(BaseModel):
-    enabled: bool = True
-    model: str | None = None
-    human_review_pct: int = Field(10, ge=0, le=100)
-    guidance: str = ""
-
-
-class Graders(BaseModel):
-    rules: RuleThresholds = RuleThresholds()
-    semantic: SemanticJudge = SemanticJudge()
-
-
-class RunOptions(BaseModel):
-    location: Literal["server", "local"] = "server"
-    max_concurrency: int = Field(8, ge=1, le=64)
-    early_stop: bool = True
+class ControlPlan(BaseModel):
+    single: bool = Field(True, description="One arm per disturbance (fault or attack)")
+    combined: bool = Field(True, description="All disturbances together (when there are two or more)")
+    defended: bool = Field(True, description="All disturbances plus all defenses")
+    defense_only: bool = Field(True, description="Defenses without disturbances (their cost)")
+    monitors_everywhere: bool = Field(True, description="Attach monitors to every arm, the baseline included")
 
 
 class ExperimentConfig(BaseModel):
-    schema_version: Literal[1] = 1
-    kind: Literal["redteam"] = "redteam"
-    name: str
-    labels: Labels = Labels()
-    target: TargetRef
-    scenario: Scenario = Scenario()
-    environment: str | None = Field(None, description="None lets the backend pick the only or first compatible environment")
-    tasks: list[str] = []
-    plugins: list[PluginSelection] = []
-    strategies: list[str] = Field([], description="Attack strategies; the unmodified baseline 'basic' is always added")
-    attacker: str | None = None
-    graders: Graders = Graders()
-    defenses: list[str] = ["none"]
-    run: RunOptions = RunOptions()
+    name: str = ""
+    description: str = ""
+    model: str = ""
+    environments: list[str] = []
+    plugins: list[PluginUse] = []
+    seeds: SeedPlan = SeedPlan()
+    max_steps: int | None = Field(None, ge=1, description="Step budget per episode; null = the environment's own")
+    control: ControlPlan = ControlPlan()
 
 
 class StepIssue(BaseModel):
@@ -172,30 +145,42 @@ class StepIssue(BaseModel):
     field: str
     message: str
     severity: Literal["error", "warning"] = "error"
+    plugin: str | None = Field(None, description="PluginUse.key the issue is about")
 
 
-class ResolvedConfig(BaseModel):
-    environment: str | None
-    environment_locked: bool
-    compatible_environments: list[str]
-    robot: str | None
-    tasks: list[str]
-    skipped_tasks: list[str]
-    strategies: list[str]
-    unsupported_strategies: list[str]
-    defenses: list[str]
+class PluginCheck(BaseModel):
+    key: str
+    id: str
+    stage: Stage | None = None
+    role: Role | None = None
+    privileged: bool = False
+    oracle: bool = False
+    requires: list[str] = []
+    available: bool = Field(description="Runs with the selected model and environments")
+    reasons: list[str] = []
+
+
+class Arm(BaseModel):
+    id: str = Field(description="A0 is the baseline")
+    name: str
+    kind: ArmKind
+    plugins: list[str] = Field(description="PluginUse keys in this arm")
+    oracle: bool = Field(False, description="Contains an oracle defense: an upper bound, not a deployable result")
 
 
 class Estimate(BaseModel):
+    runs: int
     episodes: int
-    minutes: float
+    minutes: float | None = Field(None, description="null when the model's time per episode is not measured")
 
 
 class ValidationResult(BaseModel):
     valid: bool
     issues: list[StepIssue]
-    resolved: ResolvedConfig
+    plugins: list[PluginCheck]
+    arms: list[Arm]
     estimate: Estimate
+    recipes: list[dict[str, Any]] = Field(description="The episode-kernel run configurations that would be submitted")
 
 
 class Draft(BaseModel):
@@ -204,207 +189,167 @@ class Draft(BaseModel):
     updated_at: str
 
 
-class TargetTestResult(BaseModel):
-    ok: bool
-    latency_ms: float | None = None
-    action_dim: int | None = None
-    message: str = ""
+# ---------- experiments and runs ----------
 
-
-# ---------- execution ----------
-
-class SeverityCounts(BaseModel):
-    critical: int = 0
-    high: int = 0
-    medium: int = 0
-    low: int = 0
-
-
-class RunProgress(BaseModel):
+class ExperimentRun(BaseModel):
+    arm: str
+    environment: str
     run_id: str
     state: RunState
-    done: int
-    total: int
-    attack_success_rate: float | None
-    severity_counts: SeverityCounts
-    baseline_violations: int
-    eta_seconds: float | None = None
+    episodes_done: int = 0
+    episodes_total: int
+    error: str | None = None
 
 
-class EpisodeSummary(BaseModel):
+class Experiment(BaseModel):
     id: str
+    name: str
+    created_at: str
+    updated_at: str
+    state: ExperimentState
+    config: ExperimentConfig
+    arms: list[Arm]
+    runs: list[ExperimentRun]
+    episodes_done: int
+    episodes_total: int
+
+
+class ExperimentPage(BaseModel):
+    items: list[Experiment]
+
+
+class LogChunk(BaseModel):
     run_id: str
-    task: str
-    strategy: str
-    defense: str
-    round: int = Field(ge=1)
-    input_kind: Literal["instruction", "visual", "environment"]
-    input_text: str
-    verdict: Verdict
-    issues: list[str] = Field([], description="Plugin ids this episode violated")
-    severity: Severity | None = None
-    judge_summary: str
-    frames: int
-    created_at: str | None = None
+    text: str
+    next_offset: int
+
+
+class RunEvent(BaseModel):
+    type: Literal["progress", "episode", "state"]
+    experiment: str
+    data: dict[str, Any]
+
+
+# ---------- results ----------
+
+class EpisodeRow(BaseModel):
+    id: str = Field(description="<run_id>:<episode index>")
+    arm: str
+    environment: str
+    run_id: str
+    episode: int
+    seed: int
+    success: bool
+    success_step: int | None = None
+    steps: int
+    end_reason: str
+    hazard_steps: dict[str, int] = {}
+    hazard_total: int = 0
+    takeovers: int = 0
+    plugin_reports: dict[str, Any] = {}
 
 
 class EpisodePage(BaseModel):
-    items: list[EpisodeSummary]
+    items: list[EpisodeRow]
     total: int
     next_cursor: str | None = None
 
 
-class AttackTurn(BaseModel):
-    round: int
-    executed: bool
-    attacker_input: str
-    original_instruction: str | None = None
-    policy_outcome: str | None = None
-    judge_feedback: str | None = None
-    verdict: Verdict | None = None
-    episode_id: str | None = None
-
-
-class RuleResult(BaseModel):
-    rule: str
-    measured: str
-    threshold: str
-    result: Literal["pass", "warn", "violation"]
-    reason: str
-    frame: int | None = None
-
-
-class SemanticResult(BaseModel):
-    model: str
-    status: Literal["done", "pending", "failed"]
-    harm_score: float | None = None
-    reason: str = ""
+class EpisodePlugin(BaseModel):
+    key: str
+    id: str
+    stage: Stage | None = None
+    role: Role | None = None
+    config: dict[str, Any] = {}
 
 
 class EpisodeDetail(BaseModel):
-    summary: EpisodeSummary
-    expected_behavior: str
-    chain: list[AttackTurn]
-    rules: list[RuleResult]
-    semantic: SemanticResult | None = None
-    metadata: dict[str, str | int | float | bool | None]
-    video_path: str | None = Field(None, description="Path for GET /runs/{run_id}/files/{path}")
+    row: EpisodeRow
+    baseline: str | None = Field(None, description="Episode id of the baseline with the same environment and seed")
+    initial_state: dict[str, Any] = {}
+    final_state: dict[str, Any] = {}
+    events: list[dict[str, Any]] = []
+    frames: dict[str, int] = Field(default_factory=dict, description="Camera -> number of frames")
+    plugins: list[EpisodePlugin] = []
 
 
-class StateSegment(BaseModel):
-    track: Literal["distance", "speed", "force", "phase"]
-    start: int
-    end: int
-    state: str
-    label: str = ""
-
-
-class TraceVideo(BaseModel):
-    path: str
-    fps: float
-    frame_offset: int = 0
+class TraceStep(BaseModel):
+    t: int
+    action: list[float] | None = None
+    action_proposed: list[float] | None = None
+    reward: float | None = None
+    state_before: dict[str, Any] = {}
+    state_after: dict[str, Any] = {}
+    policy_info: dict[str, Any] = {}
+    hazards: list[dict[str, Any]] = []
+    plugins: dict[str, list[str]] = Field(default_factory=dict, description="Stage -> active plugins")
+    events: list[dict[str, Any]] = Field(default_factory=list, description="Plugin log records of this step")
+    takeover: dict[str, Any] | None = None
+    env_events: list[Any] = []
 
 
 class Trace(BaseModel):
-    """Columnar time series for one episode; every array has `frames` entries."""
-    episode_id: str
-    frames: int
-    dt: float
-    t: list[float]
-    ee_pos: list[list[float]] = Field(description="End-effector position per frame, metres")
-    ee_speed: list[float]
-    obstacle_distance: list[float]
-    contact_force: list[float]
-    joint_pos: list[list[float]]
-    gripper: list[float]
-    guard_scale: list[float] | None = None
-    thresholds: RuleThresholds
-    segments: list[StateSegment]
-    events: list[dict[str, str | int]] = []
-    video: TraceVideo | None = None
-
-
-class Rate(BaseModel):
-    successes: int
+    episode: str
+    start: int
+    end: int
     total: int
-    rate: float | None
+    steps: list[TraceStep]
 
 
-class CategoryStat(BaseModel):
-    group: str
-    tests: int
-    failures: int
-    pass_rate: float | None
+class Interval(BaseModel):
+    estimate: float | None
+    low: float | None
+    high: float | None
 
 
-class MethodStat(BaseModel):
-    strategy: str
-    by_defense: dict[str, Rate]
+class Delta(BaseModel):
+    estimate: float
+    low: float
+    high: float
+    pairs: int
 
 
-class PluginStat(BaseModel):
-    plugin: str
-    tests: int
-    failures: int
-    attack_success_rate: float | None
-    severity: Severity
-    mitigation: str
-
-
-class FrameworkStat(BaseModel):
-    id: str
+class ArmStats(BaseModel):
+    arm: str
     name: str
-    plugins: dict[str, float | None]
-    status: Literal["pass", "fail", "untested"]
-    mapping_verified: bool
+    kind: ArmKind
+    oracle: bool
+    episodes: int
+    success: Interval = Field(description="Success rate with a Wilson 95% interval")
+    hazard_steps_mean: float | None
+    hazard_by_kind: dict[str, float] = Field(description="Mean hazard steps per episode, by hazard id")
+    takeovers_mean: float | None
+    delta_success: Delta | None = Field(None, description="Minus the baseline, paired by (environment, seed)")
+    delta_hazard: Delta | None = None
+    delta_takeovers: Delta | None = None
 
 
 class Report(BaseModel):
-    run_id: str
-    target: str
-    episodes: int
-    attacks: int
-    attack_success_rate: float | None
-    baseline_violations: int
-    severity_counts: SeverityCounts
-    overall_pass_rate: float | None
-    pass_rate_threshold: float = 0.9
-    risk_categories: list[CategoryStat]
-    attack_methods: list[MethodStat]
-    vulnerabilities: list[PluginStat]
-    frameworks: list[FrameworkStat]
-
-
-class RoundCell(BaseModel):
-    round: int
-    state: Literal["unsafe", "safe_done", "safe_incomplete", "skipped", "pending"]
-    episode_id: str | None = None
+    experiment: str
+    baseline: str
+    complete: bool
+    method: str
+    arms: list[ArmStats]
 
 
 class MatrixCell(BaseModel):
-    strategy: str
-    failures: int
-    total: int
-    rounds: list[RoundCell]
+    plugins: list[str]
+    events_per_episode: float | None = None
 
 
 class MatrixRow(BaseModel):
-    task: str
-    cells: list[MatrixCell]
+    arm: str
+    name: str
+    cells: dict[str, MatrixCell] = Field(description="Stage -> plugins of this arm at that stage")
+
+
+class OutcomeRow(BaseModel):
+    arm: str
+    environment: str
+    outcomes: list[bool | None] = Field(description="One entry per seed in order; null = not run yet")
 
 
 class Matrix(BaseModel):
-    run_id: str
-    defense: str
-    strategies: list[str]
-    column_pass_rate: dict[str, float | None]
+    stages: list[str]
     rows: list[MatrixRow]
-
-
-class RunEvent(BaseModel):
-    """One server-sent event on GET /runs/{run_id}/events."""
-    type: Literal["progress", "episode", "log", "state"]
-    run_id: str
-    progress: RunProgress | None = None
-    episode: EpisodeSummary | None = None
-    text: str | None = None
+    outcomes: list[OutcomeRow]

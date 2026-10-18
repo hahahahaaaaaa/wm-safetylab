@@ -76,11 +76,11 @@ def resolve_specs(items, plugins):
 
 def declared_class(spec):
     """A stand-in class built from a registry entry's declaration (hooks of its stage assumed)."""
-    from .base import HOOKS
+    from .base import HOOKS, NOT_YET
     declared = spec.get("declared") or {}
     fields = {key: declared[key] for key in DECLARED if key in declared}
     fields["requires"] = tuple(fields.get("requires") or ())
-    hooks = HOOKS.get(fields.get("stage"), ())
+    hooks = [hook for hook in HOOKS.get(fields.get("stage"), ()) if hook not in NOT_YET]
     fields.update({hook: (lambda self, value, ctx: value) for hook in hooks})
     fields["__module__"] = spec["entrypoint"].partition(":")[0]
     return type(spec["entrypoint"].rpartition(":")[2] or "Declared", (Plugin,), fields)

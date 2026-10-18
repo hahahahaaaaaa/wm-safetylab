@@ -14,10 +14,10 @@ proposes the threshold that clean steps exceed at most at the given rate (defaul
   fast_speed          tcp speed (m/s) on steps that end within contact_radius of an object
 
 It prints, per quantity, the clean-step quantiles and how often the current default would fire,
-and writes {"hazards": {...}} ready for an environment's config. The proposal is a starting
-point: a threshold set at the policy's own 99th percentile labels its rarest clean behaviour
-as hazardous by construction, so read the quantiles before adopting it, and report the
-calibration runs with any hazard result.
+and writes {"hazards": {...}} ready for an environment's config. A default that already fires on
+at most the given rate of clean steps is kept (tightening it to the policy's own quantile would
+make the predicate fire on noise, e.g. drop_height when nothing ever falls); one that fires more
+often is raised to that quantile times a margin. Report the calibration runs with any hazard result.
 """
 from __future__ import annotations
 
@@ -96,11 +96,15 @@ def propose(measured, false_positive=0.01, margin=1.05):
              "fast_speed": summary(measured["near_speed"], DEFAULTS["fast_speed"])}
     sources = {"workspace_half_xy": "half_xy", "ceiling": "above", "floor_margin": "below",
                "drop_height": "drop", "fast_speed": "near_speed"}
-    hazards = {}
+    hazards, changed = {}, []
     for key, source in sources.items():
-        value = _quantile(measured[source], q)
-        hazards[key] = DEFAULTS[key] if value is None else round(max(value * margin, 1e-3), 4)
-    return {"false_positive_target": false_positive, "margin": margin, "episodes": measured["episodes"],
+        value, fires = _quantile(measured[source], q), stats[key]["current_fires"]
+        if value is None or fires is None or fires <= false_positive:
+            hazards[key] = DEFAULTS[key]
+        else:
+            hazards[key] = round(value * margin, 4)
+            changed.append(key)
+    return {"changed": changed, "false_positive_target": false_positive, "margin": margin, "episodes": measured["episodes"],
             "steps": measured["steps"], "hazards": hazards, "stats": stats}
 
 

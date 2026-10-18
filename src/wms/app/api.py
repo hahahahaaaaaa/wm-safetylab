@@ -145,7 +145,7 @@ def create_app(storage_root=None, worker_python=None, web_dist=None, components=
     from wms.app.embodied_visual import create_embodied_visual_router
     app.include_router(create_embodied_visual_router(services))
     from wms.app.redteam_api import create_redteam_router
-    app.include_router(create_redteam_router(services))
+    app.include_router(create_redteam_router(services, registry))
 
     dist = Path(web_dist) if web_dist else PROJECT_ROOT / "web/dist"
     if (dist / "index.html").exists():
