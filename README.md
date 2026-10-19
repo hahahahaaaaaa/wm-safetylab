@@ -4,10 +4,6 @@
 
 平台把模型和仿真环境接成闭环，再用“插件”在闭环的固定位置注入故障、攻击、防御或监控。同一个插件写一次，能在所有满足条件的模型 × 环境组合上运行。每次实验都会记录配置、逐步动作、插件事件和结果，可以按同一批种子做配对比较。
 
-- 日常开发仓库：<https://github.com/hahahahaaaaaa/wm-safetylab-update>（本仓库，远端名 `origin`）
-- 早期发布仓库：<https://github.com/hahahahaaaaaa/wm-safetylab>（只保留历史版本，日常不推送）
-- 当前开发分支：`dual-entry`，包含回合内核、S1–S6 插件框架和 MemoryVLA / TD-MPC2 接入，见下文
-
 > GitHub 不包含虚拟环境、模型权重、数据集、机器配置和实验录像。克隆后，尚未配置的原生配方会显示“未配置”；按[模型与实验手册](docs/MODELS_AND_EXPERIMENTS.zh-CN.md)准备资源和 `runtime.json` 后即可启用。配方存在不等于已经跑通，每个模型的真实验证范围见下文的表格。
 
 ---
